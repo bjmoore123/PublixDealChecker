@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Publix Deal Checker</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --green:#1a6b3c;--green-lt:#2d8f55;--green-bg:#f0f7f3;--green-dim:#e0efe7;
+  --cream:#faf8f3;--ink:#1c1c1c;--ink-mid:#4a4a4a;--ink-soft:#8a8a8a;
+  --border:#ddd8ce;--red:#c0392b;--red-bg:#fdf3f2;
+  --amber:#b45309;--amber-bg:#fffbeb;--white:#fff;
+  --blue:#1e40af;--blue-bg:#eff6ff;--purple:#6b21a8;--purple-bg:#faf5ff;
+  --sh-sm:0 1px 3px rgba(0,0,0,.08);--sh-md:0 4px 16px rgba(0,0,0,.1);
+  --sh-lg:0 12px 40px rgba(0,0,0,.14);--rad:10px;
+  --serif:'DM Serif Display',Georgia,serif;--mono:'DM Mono',monospace;
+  --body:'Lato',sans-serif;--t:.18s ease;--bar:54px;
+}
+body{font-family:var(--body);background:var(--cream);color:var(--ink);min-height:100vh;font-size:15px;line-height:1.55}
+
+/* AUTH */
+#auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:radial-gradient(ellipse 80% 60% at 10% 10%,rgba(26,107,60,.08),transparent 60%),
+             radial-gradient(ellipse 60% 50% at 90% 90%,rgba(26,107,60,.06),transparent 60%),var(--cream)}
+.auth-card{background:var(--white);border:1px solid var(--border);border-radius:16px;box-shadow:var(--sh-lg);width:100%;max-width:400px;overflow:hidden}
+.auth-hd{background:var(--green);padding:32px 32px 28px;color:white}
+.auth-hd h1{font-family:var(--serif);font-size:26px;font-weight:400;margin-bottom:4px}
+.auth-hd p{opacity:.75;font-size:13px}
+.auth-tabs{display:flex;border-bottom:1px solid var(--border)}
+.auth-tab{flex:1;padding:14px;font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:none;border:none;cursor:pointer;color:var(--ink-soft);border-bottom:2px solid transparent;transition:var(--t)}
+.auth-tab.active{color:var(--green);border-bottom-color:var(--green)}
+.auth-body{padding:28px 32px 32px}
+.field{margin-bottom:18px}
+.field label{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px}
+.field input[type=email]{width:100%;padding:10px 13px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none;transition:border-color var(--t)}
+.field input[type=email]:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)}
+.pin-wrap{display:flex;gap:8px}
+.pin-d{width:48px;height:52px;text-align:center;font-size:22px;font-family:var(--mono);border:1.5px solid var(--border);border-radius:8px;outline:none;transition:border-color var(--t)}
+.pin-d:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)}
+.btn-primary{width:100%;padding:13px;background:var(--green);color:white;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;transition:background var(--t);margin-top:8px}
+.btn-primary:hover{background:var(--green-lt)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.msg{margin-top:12px;font-size:13px;min-height:18px}
+.msg.err{color:var(--red)}.msg.ok{color:var(--green)}
+
+/* APP SHELL */
+#app-screen{display:none}
+#app-screen.visible{display:block}
+.topbar{height:var(--bar);background:var(--green);color:white;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:200;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.tb-brand{font-family:var(--serif);font-size:18px;font-weight:400}
+.tb-right{display:flex;align-items:center;gap:12px}
+.tb-email{font-size:12px;opacity:.8}
+.btn-ghost{padding:6px 14px;border:1.5px solid rgba(255,255,255,.4);border-radius:6px;background:transparent;color:white;font-size:12px;font-weight:700;cursor:pointer;transition:background var(--t)}
+.btn-ghost:hover{background:rgba(255,255,255,.12)}
+.app-layout{display:flex;max-width:1400px;margin:0 auto;padding:0 24px;min-height:calc(100vh - var(--bar))}
+
+/* SIDEBAR NAV */
+.sidebar{width:188px;flex-shrink:0;padding:20px 0;position:sticky;top:var(--bar);height:calc(100vh - var(--bar));overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;border:none;background:none;border-radius:8px;font-size:13px;font-weight:600;color:var(--ink-mid);cursor:pointer;text-align:left;transition:background var(--t),color var(--t);margin-bottom:2px}
+.nav-item:hover{background:var(--green-bg);color:var(--green)}
+.nav-item.active{background:var(--green-dim);color:var(--green)}
+.nav-icon{font-size:16px}
+.nav-sep{height:1px;background:var(--border);margin:8px 14px}
+.main-content{flex:1;padding:28px 0 48px 24px;min-width:0}
+.panel{display:none}
+.panel.active{display:block}
+.panel-title{font-family:var(--serif);font-size:26px;font-weight:400;margin-bottom:4px}
+.panel-sub{color:var(--ink-soft);font-size:13px;margin-bottom:22px}
+
+/* CARDS / FORMS */
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:20px 22px;margin-bottom:18px;box-shadow:var(--sh-sm)}
+.card-title{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:14px}
+.row{margin-bottom:16px}
+.row label{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px}
+.row input,.row select{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--body);outline:none;transition:border-color var(--t);background:var(--white)}
+.row input:focus,.row select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)}
+.hint{font-size:12px;color:var(--ink-soft);margin-top:5px;line-height:1.5}
+textarea{width:100%;padding:10px 13px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);color:var(--ink);resize:vertical;min-height:90px;outline:none;transition:border-color var(--t)}
+textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)}
+
+/* BUTTONS */
+.save-bar{display:flex;align-items:center;gap:14px;padding-top:4px}
+.btn-save{padding:10px 22px;background:var(--green);color:white;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:background var(--t)}
+.btn-save:hover{background:var(--green-lt)}
+.save-st{font-size:13px}.save-st.ok{color:var(--green)}.save-st.err{color:var(--red)}
+.btn-sec{padding:9px 16px;border:1.5px solid var(--green);border-radius:8px;background:white;color:var(--green);font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;transition:var(--t)}
+.btn-sec:hover{background:var(--green-bg)}
+.btn-danger{padding:9px 18px;background:var(--red-bg);color:var(--red);border:1.5px solid #f5c6c2;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:var(--t)}
+.btn-danger:hover{background:#fae0de}
+.btn-load{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;background:var(--green);color:white;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:var(--t)}
+.btn-load:hover{background:var(--green-lt)}
+.btn-load:disabled{opacity:.5;cursor:not-allowed}
+.btn-test{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;background:var(--blue-bg);color:var(--blue);border:1.5px solid #bfdbfe;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:var(--t)}
+.btn-test:hover{background:#dbeafe}
+.btn-test:disabled{opacity:.5;cursor:not-allowed}
+
+/* STORE */
+.store-sel{display:none;align-items:flex-start;gap:14px;background:var(--green-bg);border:1.5px solid var(--green-dim);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+.store-sel.vis{display:flex}
+.store-sel-name{font-weight:700;font-size:15px;color:var(--green)}
+.store-sel-addr{font-size:13px;color:var(--ink-mid);margin-top:2px}
+.store-sel-id{font-size:11px;font-family:var(--mono);color:var(--ink-soft);margin-top:3px}
+.store-change{color:var(--green);font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;white-space:nowrap}
+.store-help{background:var(--amber-bg);border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:12px;color:var(--amber);margin-top:8px;line-height:1.6}
+
+/* ITEMS */
+.items-add{display:flex;gap:8px;margin-bottom:14px}
+.items-add input{flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none;transition:border-color var(--t)}
+.items-add input:focus{border-color:var(--green)}
+.btn-add{padding:9px 16px;background:var(--green);color:white;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
+.btn-add:hover{background:var(--green-lt)}
+.items-ul{list-style:none;margin-bottom:10px}
+.item-row{display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--border)}
+.item-row:last-child{border-bottom:none}
+.item-name{font-size:14px}
+.btn-rm{background:none;border:none;color:var(--ink-soft);font-size:18px;cursor:pointer;padding:0 4px;line-height:1}
+.btn-rm:hover{color:var(--red)}
+.items-ct{font-size:12px;color:var(--ink-soft)}
+
+/* ACCOUNT */
+.acct-info{display:flex;align-items:center;gap:16px}
+.acct-avatar{width:48px;height:48px;border-radius:50%;background:var(--green);color:white;font-size:20px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.acct-email{font-weight:700;font-size:15px}
+.acct-joined{font-size:12px;color:var(--ink-soft);margin-top:3px}
+.danger-zone{background:var(--red-bg);border:1px solid #f5c6c2;border-radius:var(--rad);padding:18px 20px}
+.danger-zone h3{color:var(--red);font-size:14px;margin-bottom:6px}
+.danger-zone p{font-size:13px;color:var(--ink-mid);margin-bottom:14px}
+
+/* DEALS LAYOUT — filter sidebar + main col */
+.deals-layout{display:flex;gap:20px;align-items:flex-start}
+
+/* ── FILTER SIDEBAR — fixed height with internal scroll ── */
+.filter-col{
+  width:224px;flex-shrink:0;
+  position:sticky;top:calc(var(--bar) + 20px);
+  max-height:calc(100vh - var(--bar) - 40px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  /* scrollbar */
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.filter-col::-webkit-scrollbar{width:4px}
+.filter-col::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+
+.filter-sec{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:14px 16px;margin-bottom:10px;box-shadow:var(--sh-sm)}
+.filter-hd{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.filter-opt{display:flex;align-items:flex-start;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0ede8;cursor:pointer;gap:8px}
+.filter-opt:last-child{border-bottom:none}
+.filter-opt input[type=checkbox]{accent-color:var(--green);margin-top:2px;flex-shrink:0;width:15px;height:15px;cursor:pointer}
+.filter-opt-label{font-size:13px;font-weight:600;color:var(--ink);flex:1;line-height:1.3}
+.filter-opt-sub{font-size:10px;color:var(--ink-soft);margin-top:1px}
+.filter-opt-cnt{font-size:11px;color:var(--ink-soft);font-family:var(--mono);white-space:nowrap;flex-shrink:0}
+
+/* DEALS MAIN */
+.deals-main{flex:1;min-width:0}
+.deals-topbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.deals-search{flex:1;min-width:160px;padding:9px 13px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none;transition:border-color var(--t)}
+.deals-search:focus{border-color:var(--green)}
+.deals-meta{font-size:12px;color:var(--ink-soft);margin-bottom:10px}
+.validity-bar{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:9px 14px;font-size:13px;color:var(--green);font-weight:600;margin-bottom:12px;display:none}
+.validity-bar.vis{display:flex;align-items:center;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:var(--green-dim);color:var(--green);border-radius:20px;font-size:12px;font-weight:700;cursor:pointer}
+.chip:hover{background:var(--green-bg)}
+.chip-x{font-size:14px;line-height:1}
+
+/* DEAL CARD */
+.deals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:14px}
+.deal-card{background:var(--white);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--sh-sm);transition:box-shadow var(--t),transform var(--t);display:flex;flex-direction:column;position:relative}
+.deal-card:hover{box-shadow:var(--sh-md);transform:translateY(-2px)}
+.deal-card-img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#f7f7f5;padding:12px;display:block}
+.deal-card-img-ph{width:100%;aspect-ratio:1/1;background:#f7f7f5;display:flex;align-items:center;justify-content:center;font-size:38px}
+.deal-card-body{padding:11px 12px;flex:1;display:flex;flex-direction:column;gap:3px}
+.deal-card-dept{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft)}
+.deal-card-title{font-size:13px;font-weight:700;color:var(--ink);line-height:1.3}
+.deal-card-desc{font-size:11px;color:var(--ink-mid);line-height:1.4}
+.deal-card-price{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--green);margin-top:auto;padding-top:6px}
+.deal-card-save{font-size:11px;color:var(--amber);font-weight:700}
+.deal-card-valid{font-size:10px;color:var(--ink-soft);margin-top:1px}
+.deal-card-fine{font-size:10px;color:var(--ink-soft);font-style:italic}
+.deal-card-badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.badge-publix{background:var(--green-dim);color:var(--green)}
+.badge-coupon{background:var(--purple-bg);color:var(--purple)}
+.badge-extra{background:var(--blue-bg);color:var(--blue)}
+.badge-stacked{background:var(--amber-bg);color:var(--amber)}
+
+/* ADD-TO-LIST CHECKBOX on deal card */
+.deal-add-wrap{position:absolute;top:8px;right:8px;z-index:2}
+.deal-add-cb{display:none}
+.deal-add-lbl{
+  display:flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:50%;
+  background:rgba(255,255,255,.92);border:1.5px solid var(--border);
+  cursor:pointer;transition:background var(--t),border-color var(--t);
+  box-shadow:var(--sh-sm);font-size:14px;
+}
+.deal-add-lbl:hover{background:var(--green-bg);border-color:var(--green)}
+.deal-add-cb:checked + .deal-add-lbl{background:var(--green);border-color:var(--green);color:white}
+.deal-add-cb:checked + .deal-add-lbl::after{content:'✓';color:white;font-weight:900}
+.deal-add-lbl::after{content:'+';color:var(--green);font-weight:900}
+
+/* MATCH CARD */
+.matches-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+.match-card{background:var(--white);border:2px solid var(--green-dim);border-radius:12px;overflow:hidden;box-shadow:var(--sh-sm);display:flex;flex-direction:column;transition:box-shadow var(--t),transform var(--t)}
+.match-card:hover{box-shadow:var(--sh-md);transform:translateY(-2px)}
+.match-card-img{width:100%;aspect-ratio:1/1;object-fit:contain;background:var(--green-bg);padding:12px}
+.match-card-img-ph{width:100%;aspect-ratio:1/1;background:var(--green-bg);display:flex;align-items:center;justify-content:center;font-size:38px}
+.match-card-body{padding:11px 12px;flex:1;display:flex;flex-direction:column;gap:3px}
+.match-myitem{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--green);background:var(--green-dim);border-radius:4px;padding:2px 6px;display:inline-block;margin-bottom:4px}
+.match-title{font-size:13px;font-weight:700;color:var(--ink);line-height:1.3}
+.match-desc{font-size:11px;color:var(--ink-mid)}
+.match-price{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--green);margin-top:auto;padding-top:6px}
+.match-save{font-size:11px;color:var(--amber);font-weight:700}
+.match-valid{font-size:10px;color:var(--ink-soft)}
+.match-score{font-size:10px;color:var(--ink-soft);margin-top:2px}
+.match-banner{background:var(--green-bg);border:1.5px solid var(--green-dim);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--green)}
+
+/* THRESHOLD inline on matches page */
+.threshold-inline{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:16px 20px;margin-bottom:18px;box-shadow:var(--sh-sm);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.threshold-inline label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);white-space:nowrap}
+.threshold-inline input[type=range]{flex:1;min-width:120px;accent-color:var(--green)}
+.threshold-val{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green);min-width:28px}
+.threshold-inline .hint{font-size:12px;color:var(--ink-soft);white-space:nowrap}
+
+/* SCRAPE LOGS */
+.scrape-bar{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px;font-size:13px;color:var(--green)}
+.scrape-bar.error{background:var(--red-bg);border-color:#f5c6c2;color:var(--red)}
+.scrape-bar.loading{background:var(--amber-bg);border-color:#fde68a;color:var(--amber)}
+.scrape-stat{font-weight:700}
+.log-row{background:var(--white);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:14px;box-shadow:var(--sh-sm)}
+.log-icon{font-size:24px;flex-shrink:0}
+.log-detail{flex:1;min-width:0}
+.log-summary{font-weight:700;font-size:14px}
+.log-meta{font-size:12px;color:var(--ink-soft);margin-top:3px}
+.log-errors{font-size:11px;color:var(--red);margin-top:4px}
+.terminal{background:#1a1a2e;border-radius:8px;padding:14px 16px;font-family:var(--mono);font-size:12px;color:#e2e8f0;max-height:380px;overflow-y:auto;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.terminal .ts{color:#64748b;margin-right:8px}
+.terminal .terr{color:#f87171}
+.terminal .tok{color:#4ade80}
+
+/* ADMIN TABLE */
+.admin-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.admin-tbl th{padding:10px 12px;background:var(--green);color:white;text-align:left;font-size:11px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.admin-tbl td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+.admin-tbl tr:hover td{background:var(--green-bg)}
+.admin-tbl tr:last-child td{border-bottom:none}
+.abn{padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;border:1.5px solid;transition:var(--t);white-space:nowrap}
+.abn.g{border-color:var(--green);color:var(--green);background:var(--green-bg)}.abn.g:hover{background:var(--green-dim)}
+.abn.r{border-color:var(--red);color:var(--red);background:var(--red-bg)}.abn.r:hover{background:#fae0de}
+.abn.a{border-color:var(--amber);color:var(--amber);background:var(--amber-bg)}.abn.a:hover{background:#fef3c7}
+.adm-sec{margin-bottom:28px}
+.adm-sec-title{font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+
+/* MODAL */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center;padding:24px}
+.overlay.vis{display:flex}
+.dialog{background:white;border-radius:14px;padding:28px;max-width:420px;width:100%;box-shadow:var(--sh-lg)}
+.dialog h3{font-size:18px;font-weight:700;margin-bottom:10px}
+.dialog p{font-size:14px;color:var(--ink-mid);margin-bottom:20px;line-height:1.5}
+.dlg-btns{display:flex;gap:10px;justify-content:flex-end}
+.btn-cancel{padding:9px 18px;background:var(--green-bg);color:var(--green);border:1.5px solid var(--green-dim);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
+
+/* TOGGLES */
+.slider-wrap{display:flex;align-items:center;gap:12px;margin-top:8px}
+.slider-wrap input[type=range]{flex:1;accent-color:var(--green)}
+.slider-val{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green);min-width:28px}
+
+/* EMPTY STATES */
+.empty{text-align:center;padding:60px 24px;color:var(--ink-soft)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+
+/* LOADING SPINNER */
+.spinning{display:inline-block;width:18px;height:18px;border:2.5px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* RESPONSIVE */
+@media(max-width:900px){.filter-col{display:none}.deals-layout{flex-direction:column}}
+@media(max-width:680px){.sidebar{display:none}.main-content{padding:20px 0}.topbar{padding:0 16px}.tb-email{display:none}.app-layout{padding:0 12px}.card{padding:16px}.deals-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+</style>
+</head>
+<body>
+
+<!-- AUTH -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-hd"><h1>Publix Deal Checker</h1><p>Get notified when your grocery list goes on sale</p></div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchTab('login')">Sign In</button>
+      <button class="auth-tab" onclick="switchTab('register')">Create Account</button>
+    </div>
+    <div class="auth-body">
+      <div class="field"><label>Email address</label>
+        <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="field"><label>4-digit PIN</label>
+        <div class="pin-wrap">
+          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        </div></div>
+      <button class="btn-primary" id="auth-btn" onclick="doAuth()">Sign In</button>
+      <div class="msg" id="auth-msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-screen">
+  <div class="topbar">
+    <div class="tb-brand">Publix Deal Checker</div>
+    <div class="tb-right">
+      <span class="tb-email" id="topbar-email"></span>
+      <button class="btn-ghost" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+  <div class="app-layout">
+    <nav class="sidebar">
+      <button class="nav-item active" onclick="showPanel('store')"   id="nav-store">  <span class="nav-icon">🏪</span> Store</button>
+      <button class="nav-item"        onclick="showPanel('deals')"   id="nav-deals">  <span class="nav-icon">🏷️</span> Deals</button>
+      <button class="nav-item"        onclick="showPanel('matches')" id="nav-matches"><span class="nav-icon">🎯</span> My Matches</button>
+      <button class="nav-item"        onclick="showPanel('list')"    id="nav-list">   <span class="nav-icon">📋</span> My List</button>
+      <button class="nav-item"        onclick="showPanel('schedule')"id="nav-schedule"><span class="nav-icon">📅</span> Schedule</button>
+      <button class="nav-item"        onclick="showPanel('account')" id="nav-account"><span class="nav-icon">👤</span> Account</button>
+      <div class="nav-sep"></div>
+      <button class="nav-item"        onclick="showPanel('admin')"   id="nav-admin">  <span class="nav-icon">⚙️</span> Admin</button>
+    </nav>
+
+    <div class="main-content">
+
+<!-- ══ STORE ══════════════════════════════════════════════════════════════ -->
+<div class="panel active" id="panel-store">
+  <div class="panel-title">Store Settings</div>
+  <div class="panel-sub">Choose which Publix location to track deals for.</div>
+  <div class="card">
+    <div class="card-title">Your Store</div>
+    <div class="store-sel" id="store-sel">
+      <div style="font-size:24px">🏪</div>
+      <div style="flex:1;min-width:0">
+        <div class="store-sel-name"  id="ss-name"></div>
+        <div class="store-sel-addr"  id="ss-addr"></div>
+        <div class="store-sel-id"    id="ss-id-disp"></div>
+      </div>
+      <span class="store-change" onclick="clearStore()">Change</span>
+    </div>
+    <div id="store-search-ui">
+      <div class="row">
+        <label>Enter your Store ID</label>
+        <input type="text" id="store-id-input" placeholder="e.g. 1546" inputmode="numeric" oninput="onStoreInput()"
+          style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;width:100%;outline:none">
+        <div class="store-help" style="margin-top:10px">
+          <strong>How to find your store ID:</strong><br>
+          Visit <a href="https://www.publix.com/locations" target="_blank" style="color:var(--amber)">publix.com/locations</a>,
+          click your store, and find the 4-digit number in the URL: <code>/store-details/<strong>XXXX</strong>/</code>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="save-bar">
+    <button class="btn-save" onclick="savePrefs('store')">Save Changes</button>
+    <span class="save-st" id="ss-store"></span>
+  </div>
+</div>
+
+<!-- ══ DEALS ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-deals">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <div class="panel-title">All Deals</div>
+    <button class="btn-load" style="padding:7px 14px;font-size:12px" id="btn-refresh-deals" onclick="loadDeals(true)">↻ Refresh</button>
+  </div>
+  <div class="panel-sub" id="deals-sub">Browse all current sale items at your store.</div>
+
+  <div id="deals-loading" style="display:none;text-align:center;padding:48px">
+    <div class="spinning" style="width:32px;height:32px;border-color:rgba(26,107,60,.3);border-top-color:var(--green);margin:0 auto 12px"></div>
+    <div style="font-size:14px;color:var(--ink-soft)">Loading deals…</div>
+  </div>
+  <div id="deals-err" style="display:none;color:var(--red);font-size:13px;padding:8px 0"></div>
+
+  <div id="deals-browser" style="display:none">
+    <div class="validity-bar" id="deals-vbar"></div>
+    <div class="deals-layout">
+      <div class="filter-col" id="deals-filter-col">
+        <div class="filter-sec">
+          <div class="filter-hd">Flyer</div>
+          <label class="filter-opt"><input type="checkbox" id="f-weekly" checked onchange="renderDeals()">
+            <div><div class="filter-opt-label">Weekly Ad</div><div class="filter-opt-sub" id="fsub-weekly"></div></div>
+            <span class="filter-opt-cnt" id="fcnt-weekly"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="f-extra" onchange="renderDeals()">
+            <div><div class="filter-opt-label">Extra Savings</div><div class="filter-opt-sub" id="fsub-extra"></div></div>
+            <span class="filter-opt-cnt" id="fcnt-extra"></span></label>
+        </div>
+        <div class="filter-sec">
+          <div class="filter-hd">Deal Type</div>
+          <label class="filter-opt"><input type="checkbox" id="f-stacked" onchange="renderDeals()">
+            <div><div class="filter-opt-label">Stacked Deals</div></div>
+            <span class="filter-opt-cnt" id="fcnt-stacked"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="f-coupon" onchange="renderDeals()">
+            <div><div class="filter-opt-label">Printable Coupons</div></div>
+            <span class="filter-opt-cnt" id="fcnt-coupon"></span></label>
+        </div>
+        <div class="filter-sec">
+          <div class="filter-hd">Popular Filters</div>
+          <label class="filter-opt"><input type="checkbox" id="f-publix" onchange="renderDeals()">
+            <div><div class="filter-opt-label">Publix Brand</div></div>
+            <span class="filter-opt-cnt" id="fcnt-publix"></span></label>
+        </div>
+        <div class="filter-sec"><div class="filter-hd">Department</div><div id="dept-deals"></div></div>
+      </div>
+      <div class="deals-main">
+        <div class="deals-topbar">
+          <input class="deals-search" type="text" id="deals-q" placeholder="Search all deals…" oninput="renderDeals()">
+        </div>
+        <div class="chips" id="deals-chips"></div>
+        <div class="deals-meta" id="deals-meta"></div>
+        <div class="deals-grid" id="deals-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MATCHES ════════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-matches">
+  <div class="panel-title">🎯 My Matches</div>
+  <div class="panel-sub">Deals from this week that match items on your shopping list.</div>
+
+  <!-- Threshold control inline at top -->
+  <div class="threshold-inline" id="threshold-wrap">
+    <label>Match Sensitivity</label>
+    <input type="range" id="threshold" min="40" max="100" value="75"
+      oninput="document.getElementById('threshold-val').textContent=this.value"
+      onchange="onThresholdChange()">
+    <span class="threshold-val" id="threshold-val">75</span>
+    <span class="hint">Higher = stricter. 75 is recommended.</span>
+  </div>
+
+  <div id="matches-loading" style="display:none;text-align:center;padding:48px">
+    <div class="spinning" style="width:32px;height:32px;border-color:rgba(26,107,60,.3);border-top-color:var(--green);margin:0 auto 12px"></div>
+    <div style="font-size:14px;color:var(--ink-soft)">Finding matches…</div>
+  </div>
+  <div id="matches-err" style="display:none;color:var(--red);font-size:13px;padding:8px 0"></div>
+
+  <div id="matches-browser" style="display:none">
+    <div class="match-banner" id="matches-banner"></div>
+    <div class="deals-layout">
+      <div class="filter-col" id="matches-filter-col">
+        <div class="filter-sec">
+          <div class="filter-hd">Flyer</div>
+          <label class="filter-opt"><input type="checkbox" id="mf-weekly" checked onchange="renderMatches()">
+            <div><div class="filter-opt-label">Weekly Ad</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-weekly"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="mf-extra" onchange="renderMatches()">
+            <div><div class="filter-opt-label">Extra Savings</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-extra"></span></label>
+        </div>
+        <div class="filter-sec">
+          <div class="filter-hd">Deal Type</div>
+          <label class="filter-opt"><input type="checkbox" id="mf-coupon" onchange="renderMatches()">
+            <div><div class="filter-opt-label">Coupons</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-coupon"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="mf-publix" onchange="renderMatches()">
+            <div><div class="filter-opt-label">Publix Brand</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-publix"></span></label>
+        </div>
+        <div class="filter-sec"><div class="filter-hd">Department</div><div id="dept-matches"></div></div>
+      </div>
+      <div class="deals-main">
+        <div class="deals-topbar">
+          <input class="deals-search" type="text" id="matches-q" placeholder="Search matches…" oninput="renderMatches()">
+        </div>
+        <div class="chips" id="matches-chips"></div>
+        <div class="deals-meta" id="matches-meta"></div>
+        <div class="matches-grid" id="matches-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MY LIST ════════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-list">
+  <div class="panel-title">My Shopping List</div>
+  <div class="panel-sub">Add items you regularly buy. Fuzzy matching finds deals even with partial names.</div>
+  <div class="card">
+    <div class="card-title">Add Items</div>
+    <div class="items-add">
+      <input type="text" id="new-item" placeholder="e.g. chicken breast, greek yogurt…" onkeydown="if(event.key==='Enter')addItem()">
+      <button class="btn-add" onclick="addItem()">+ Add</button>
+    </div>
+    <ul class="items-ul" id="items-ul"></ul>
+    <div class="items-ct" id="items-ct">0 items</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Bulk Import</div>
+    <div class="row"><label>Paste a list (one item per line)</label>
+      <textarea id="bulk-ta" placeholder="chicken breast&#10;greek yogurt&#10;tide pods&#10;orange juice"></textarea></div>
+    <button class="btn-sec" onclick="bulkImport()">Import Items</button>
+  </div>
+  <div class="save-bar">
+    <button class="btn-save" onclick="savePrefs('list')">Save Changes</button>
+    <span class="save-st" id="ss-list"></span>
+  </div>
+</div>
+
+<!-- ══ SCHEDULE ═══════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-schedule">
+  <div class="panel-title">Alert Schedule</div>
+  <div class="panel-sub">Publix updates their weekly ad on Wednesdays. The scraper runs automatically via EventBridge.</div>
+  <div class="card">
+    <div class="card-title">When to Check</div>
+    <div class="row"><label>Day of week</label>
+      <select id="sched-day">
+        <option value="1">Monday</option><option value="2">Tuesday</option>
+        <option value="3" selected>Wednesday (recommended)</option>
+        <option value="4">Thursday</option><option value="5">Friday</option>
+        <option value="6">Saturday</option><option value="0">Sunday</option>
+      </select></div>
+    <div class="row" style="display:flex;gap:12px">
+      <div style="flex:1"><label>Hour</label>
+        <select id="sched-hour">
+          <option value="6">6</option><option value="7">7</option><option value="8" selected>8</option>
+          <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
+        </select></div>
+      <div style="width:80px"><label>AM/PM</label>
+        <select id="sched-ampm"><option value="AM" selected>AM</option><option value="PM">PM</option></select></div>
+    </div>
+    <div class="hint">The scraper runs via AWS EventBridge cron every Wednesday at 12:00 UTC (8 AM ET).</div>
+  </div>
+  <div class="save-bar">
+    <button class="btn-save" onclick="savePrefs('schedule')">Save Changes</button>
+    <span class="save-st" id="ss-schedule"></span>
+  </div>
+</div>
+
+<!-- ══ ACCOUNT ════════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-account">
+  <div class="panel-title">Account</div>
+  <div class="panel-sub">Manage your settings and notification preferences.</div>
+  <div class="card">
+    <div class="acct-info">
+      <div class="acct-avatar" id="acct-avatar">?</div>
+      <div><div class="acct-email" id="acct-email-disp"></div>
+           <div class="acct-joined">Publix Deal Checker member</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Notification Email</div>
+    <div class="row">
+      <label>Send deal alerts to</label>
+      <input type="email" id="notify-email" placeholder="you@example.com">
+      <div class="hint">Defaults to your account email. Change to send alerts to a different address.</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+      <button class="btn-test" id="btn-test-email" onclick="sendTestEmail()">📧 Send Test Email</button>
+      <span id="test-email-msg" style="font-size:13px"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Change PIN</div>
+    <div class="row"><label>Current PIN</label>
+      <div class="pin-wrap" style="max-width:220px">
+        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      </div></div>
+    <div class="row"><label>New PIN</label>
+      <div class="pin-wrap" style="max-width:220px">
+        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      </div></div>
+    <button class="btn-sec" onclick="changePin()">Update PIN</button>
+    <div class="msg" id="pin-msg" style="margin-top:12px"></div>
+  </div>
+  <div class="save-bar" style="margin-bottom:24px">
+    <button class="btn-save" onclick="savePrefs('account')">Save Changes</button>
+    <span class="save-st" id="ss-account"></span>
+  </div>
+  <div class="danger-zone">
+    <h3>Delete Account</h3>
+    <p>Permanently removes your account and all preferences. Cannot be undone.</p>
+    <button class="btn-danger" onclick="document.getElementById('del-overlay').classList.add('vis')">Delete My Account</button>
+  </div>
+</div>
+
+<!-- ══ ADMIN ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-admin">
+  <div class="panel-title">Admin</div>
+  <div class="panel-sub">Manage users, view scrape history, run jobs on demand.</div>
+  <div id="admin-login-sec" style="max-width:380px;margin:0 auto">
+    <div class="card">
+      <div class="card-title">Admin Authentication</div>
+      <div class="row"><label>Admin Secret</label>
+        <input type="password" id="admin-secret-inp" placeholder="Enter admin secret" onkeydown="if(event.key==='Enter')adminLogin()"></div>
+      <button class="btn-save" onclick="adminLogin()">Authenticate</button>
+      <div class="msg" id="admin-login-msg" style="margin-top:10px"></div>
+    </div>
+  </div>
+  <div id="admin-dash" style="display:none">
+    <div class="scrape-bar loading" id="admin-scrape-bar"><span>Loading scrape status…</span></div>
+    <div class="adm-sec">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="adm-sec-title" style="margin-bottom:0">Recent Scrape Jobs</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="adminRunScrape(this)">▶ Run Now</button>
+          <button class="abn g" onclick="adminLoadLogs()">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="admin-logs-el"><div style="color:var(--ink-soft);font-size:13px;padding:12px 0">Loading…</div></div>
+    </div>
+    <div class="adm-sec">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="adm-sec-title" style="margin-bottom:0">CloudWatch Log Tail</div>
+        <button class="abn g" onclick="adminLoadTail()">↻ Fetch Latest</button>
+      </div>
+      <div id="admin-tail-loading" style="color:var(--ink-soft);font-size:13px">Click "Fetch Latest" to load logs.</div>
+      <div id="admin-tail" class="terminal" style="display:none"></div>
+    </div>
+    <div class="adm-sec">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="adm-sec-title" style="margin-bottom:0">User Accounts <span id="admin-user-ct" style="font-size:13px;color:var(--ink-soft);font-weight:400"></span></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="showCreateUser()">+ Add User</button>
+          <button class="abn g" onclick="adminLoadUsers()">↻ Refresh</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="admin-tbl">
+          <thead><tr><th>Email</th><th>Notify To</th><th>Store</th><th>Items</th><th>Joined</th><th>Actions</th></tr></thead>
+          <tbody id="admin-tbody"><tr><td colspan="6" style="color:var(--ink-soft);font-size:13px;padding:16px">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+    </div><!-- /main-content -->
+  </div><!-- /app-layout -->
+</div><!-- /app-screen -->
+
+<!-- DIALOGS -->
+<div class="overlay" id="del-overlay">
+  <div class="dialog"><h3>Delete account?</h3>
+    <p>This permanently removes your account, shopping list, and all settings.</p>
+    <div class="dlg-btns">
+      <button class="btn-cancel" onclick="closeOv('del-overlay')">Cancel</button>
+      <button class="btn-danger" onclick="deleteAccount()">Yes, delete</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="admin-pin-ov">
+  <div class="dialog"><h3>Reset PIN</h3>
+    <p>Set new PIN for <strong id="apoe"></strong></p>
+    <div class="row"><label>New PIN</label><div class="pin-wrap">
+      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+    </div></div>
+    <div class="msg" id="ap-msg" style="margin-top:8px"></div>
+    <div class="dlg-btns" style="margin-top:16px">
+      <button class="btn-cancel" onclick="closeOv('admin-pin-ov')">Cancel</button>
+      <button class="btn-save" onclick="adminDoResetPin()">Reset PIN</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="admin-email-ov">
+  <div class="dialog"><h3>Reset Email</h3>
+    <p>Change account email for <strong id="aeoe"></strong></p>
+    <div class="row"><label>New Email</label><input type="email" id="ae-new-inp" placeholder="new@example.com"></div>
+    <div class="msg" id="ae-msg" style="margin-top:8px"></div>
+    <div class="dlg-btns" style="margin-top:16px">
+      <button class="btn-cancel" onclick="closeOv('admin-email-ov')">Cancel</button>
+      <button class="btn-save" onclick="adminDoResetEmail()">Update Email</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="admin-items-ov">
+  <div class="dialog" style="max-width:520px"><h3>Shopping List — <span id="ai-email"></span></h3>
+    <div id="ai-list" style="max-height:300px;overflow-y:auto;margin:12px 0;font-size:13px"></div>
+    <div class="msg" id="ai-msg" style="margin-bottom:8px"></div>
+    <div class="dlg-btns">
+      <button class="btn-cancel" onclick="closeOv('admin-items-ov')">Close</button>
+      <button class="btn-danger" onclick="adminClearItems()">Clear All Items</button>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="admin-create-ov">
+  <div class="dialog"><h3>Create New User</h3>
+    <div class="row"><label>Email</label><input type="email" id="ac-email" placeholder="user@example.com"></div>
+    <div class="row"><label>4-digit PIN</label><div class="pin-wrap">
+      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+    </div></div>
+    <div class="msg" id="ac-msg" style="margin-top:8px"></div>
+    <div class="dlg-btns" style="margin-top:16px">
+      <button class="btn-cancel" onclick="closeOv('admin-create-ov')">Cancel</button>
+      <button class="btn-save" onclick="adminDoCreate()">Create User</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════
+const API = window.PUBLIX_API_URL || 'https://YOUR_API_GATEWAY_URL';
+
+let token     = localStorage.getItem('pdc_token') || null;
+let userEmail = localStorage.getItem('pdc_email') || null;
+let prefs     = null;
+let adminKey  = sessionStorage.getItem('pdc_admin') || null;
+
+// Deal state
+let _allDeals      = [];       // raw from API
+let _dealCounts    = {};       // type counts
+let _deptCounts    = {};       // dept counts
+let _dealsUpdated  = '';       // WeeklyAdLatestUpdatedDateTime from last fetch
+let _dealsStoreId  = '';       // which store these deals are for
+let _allMatches    = [];       // computed matches
+let _matchDeptCts  = {};
+
+// ═══════════════════════════════════════════════════════════════════
+// PIN INPUTS
+// ═══════════════════════════════════════════════════════════════════
+function initPins(sel, onSubmit) {
+  const ds = document.querySelectorAll(sel);
+  ds.forEach((el,i) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/\D/g,'').slice(-1);
+      if (el.value && i < ds.length-1) ds[i+1].focus();
+    });
+    el.addEventListener('keydown', e => {
+      if (e.key==='Backspace' && !el.value && i>0) ds[i-1].focus();
+      if (e.key==='Enter' && onSubmit) onSubmit();
+    });
+    el.addEventListener('focus', () => el.select());
+  });
+}
+function getPin(sel) { return [...document.querySelectorAll(sel)].map(e=>e.value).join(''); }
+function clrPin(sel) { document.querySelectorAll(sel).forEach(e=>e.value=''); const f=document.querySelector(sel); if(f) f.focus(); }
+
+initPins('.auth-pin', doAuth);
+initPins('.cur-pin', null);
+initPins('.new-pin', null);
+initPins('.ap-pin', null);
+initPins('.ac-pin', null);
+
+// Paste support on auth pins
+document.querySelectorAll('.auth-pin').forEach((el,i,arr) => {
+  el.addEventListener('paste', e => {
+    const t=(e.clipboardData||window.clipboardData).getData('text').replace(/\D/g,'').slice(0,4);
+    if(t.length===4){e.preventDefault();arr.forEach((d,j)=>d.value=t[j]||'');arr[3].focus();}
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════════════════════════════
+let authMode = 'login';
+function switchTab(m) {
+  authMode=m;
+  document.querySelectorAll('.auth-tab').forEach((t,i)=>t.classList.toggle('active',(m==='login'&&i===0)||(m==='register'&&i===1)));
+  document.getElementById('auth-btn').textContent = m==='login'?'Sign In':'Create Account';
+  setMsg('auth-msg','','');
+}
+function setMsg(id,txt,cls){ const el=document.getElementById(id); if(!el) return; el.textContent=txt; el.className='msg'+(cls?' '+cls:''); }
+async function doAuth() {
+  const em = document.getElementById('auth-email').value.trim().toLowerCase();
+  const pin = getPin('.auth-pin');
+  if(!em){ setMsg('auth-msg','Please enter your email.','err'); return; }
+  if(pin.length!==4){ setMsg('auth-msg','Please enter your 4-digit PIN.','err'); return; }
+  const btn=document.getElementById('auth-btn');
+  btn.disabled=true; btn.textContent=authMode==='login'?'Signing in…':'Creating account…';
+  try{
+    const res=await fetch(API+(authMode==='login'?'/auth/login':'/auth/register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,pin})});
+    const data=await res.json();
+    if(!res.ok){setMsg('auth-msg',data.error||'Something went wrong.','err');return;}
+    if(authMode==='register'){setMsg('auth-msg','Account created! Signing you in…','ok');await new Promise(r=>setTimeout(r,700));authMode='login';await doAuth();return;}
+    token=data.token;userEmail=data.email;
+    localStorage.setItem('pdc_token',token);localStorage.setItem('pdc_email',userEmail);
+    prefs=data.prefs; enterApp();
+  }catch(e){setMsg('auth-msg','Could not reach the server.','err');}
+  finally{btn.disabled=false;btn.textContent=authMode==='login'?'Sign In':'Create Account';}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// APP ENTRY
+// ═══════════════════════════════════════════════════════════════════
+function enterApp() {
+  document.getElementById('auth-screen').style.display='none';
+  document.getElementById('app-screen').classList.add('visible');
+  document.getElementById('topbar-email').textContent=userEmail;
+  document.getElementById('acct-email-disp').textContent=userEmail;
+  document.getElementById('acct-avatar').textContent=(userEmail[0]||'?').toUpperCase();
+  loadPrefs();
+  showPanel('deals');
+  // Preload deals on login
+  preloadDeals();
+}
+async function doLogout(){
+  if(token){try{await fetch(API+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+token}});}catch(_){}}
+  token=null;userEmail=null;prefs=null;_allDeals=[];_allMatches=[];_dealsStoreId='';
+  localStorage.removeItem('pdc_token');localStorage.removeItem('pdc_email');
+  document.getElementById('app-screen').classList.remove('visible');
+  document.getElementById('auth-screen').style.display='';
+  clrPin('.auth-pin');
+}
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  document.getElementById('nav-'+name).classList.add('active');
+  if(name==='admin') initAdmin();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PREFS
+// ═══════════════════════════════════════════════════════════════════
+function loadPrefs() {
+  if(!prefs) return;
+  const sid=prefs.store_id||'';
+  if(sid) setStoreSel({id:sid, name:prefs.store_name||'', address:prefs.store_address||''});
+  document.getElementById('notify-email').value = prefs.notify_email || userEmail || '';
+  renderItems();
+  const t=((prefs.matching||{}).threshold)||75;
+  document.getElementById('threshold').value=t;
+  document.getElementById('threshold-val').textContent=t;
+  const s=prefs.schedule||{};
+  document.getElementById('sched-day').value  = s.days?.[0]??3;
+  document.getElementById('sched-hour').value = s.hour??8;
+  document.getElementById('sched-ampm').value = s.ampm??'AM';
+}
+function collectPrefs(){
+  return {
+    store_id:      prefs?.store_id||'',
+    store_name:    prefs?.store_name||'',
+    store_address: prefs?.store_address||'',
+    notify_email:  document.getElementById('notify-email').value.trim()||userEmail,
+    items:         prefs?.items||[],
+    matching:      {threshold:parseInt(document.getElementById('threshold').value)},
+    schedule:      {days:[parseInt(document.getElementById('sched-day').value)],
+                    hour:parseInt(document.getElementById('sched-hour').value),
+                    minute:0, ampm:document.getElementById('sched-ampm').value},
+  };
+}
+async function savePrefs(ctx){
+  const stEl=document.getElementById('ss-'+ctx);
+  if(stEl){stEl.textContent='Saving…';stEl.className='save-st';}
+  const p=collectPrefs();
+  if(prefs) p.items=prefs.items||[];
+  try{
+    const res=await fetch(API+'/user/prefs',{method:'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prefs:p})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Save failed');
+    prefs=data.prefs;
+    if(stEl){stEl.textContent='✓ Saved';stEl.className='save-st ok';setTimeout(()=>{stEl.textContent='';stEl.className='save-st';},2500);}
+  }catch(e){if(stEl){stEl.textContent='✗ '+e.message;stEl.className='save-st err';}}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STORE
+// ═══════════════════════════════════════════════════════════════════
+function setStoreSel(s){
+  document.getElementById('store-id-input').value=s.id||'';
+  if(!prefs) prefs={};
+  prefs.store_id=s.id||'';prefs.store_name=s.name||'';prefs.store_address=s.address||'';
+  if(s.id){
+    document.getElementById('ss-name').textContent   = s.name||('Store #'+s.id);
+    document.getElementById('ss-addr').textContent   = s.address||'';
+    document.getElementById('ss-id-disp').textContent= 'Store ID: '+s.id;
+    document.getElementById('store-sel').classList.add('vis');
+    document.getElementById('store-search-ui').style.display='none';
+  }
+}
+function clearStore(){
+  document.getElementById('store-id-input').value='';
+  document.getElementById('store-sel').classList.remove('vis');
+  document.getElementById('store-search-ui').style.display='';
+  if(prefs){prefs.store_id='';prefs.store_name='';prefs.store_address='';}
+  _dealsStoreId='';_allDeals=[];_allMatches=[];
+  document.getElementById('deals-browser').style.display='none';
+  document.getElementById('matches-browser').style.display='none';
+}
+function onStoreInput(){
+  const v=document.getElementById('store-id-input').value.trim();
+  if(!prefs) prefs={};
+  prefs.store_id=v;prefs.store_name='';prefs.store_address='';
+  if(/^\d{3,6}$/.test(v)){
+    setStoreSel({id:v,name:'',address:''});
+    // Auto preload if store changed
+    if(v!==_dealsStoreId) preloadDeals();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ITEMS
+// ═══════════════════════════════════════════════════════════════════
+// Items stored as strings; deal-checkbox adds title string
+function renderItems(){
+  const items=(prefs&&prefs.items)||[];
+  document.getElementById('items-ul').innerHTML=items.map((item,i)=>
+    `<li class="item-row"><span class="item-name">${escH(item)}</span><button class="btn-rm" onclick="removeItem(${i})">×</button></li>`).join('');
+  document.getElementById('items-ct').textContent=items.length+' item'+(items.length!==1?'s':'');
+}
+function addItem(){
+  const inp=document.getElementById('new-item');const v=inp.value.trim();
+  if(!v) return;if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
+  if(!prefs.items.includes(v)){prefs.items.push(v);renderItems();}
+  inp.value='';inp.focus();
+}
+function removeItem(i){if(!prefs||!prefs.items) return;prefs.items.splice(i,1);renderItems();syncDealCheckboxes();}
+function bulkImport(){
+  const lines=document.getElementById('bulk-ta').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
+  lines.forEach(l=>{if(!prefs.items.includes(l)) prefs.items.push(l);});
+  renderItems();document.getElementById('bulk-ta').value='';syncDealCheckboxes();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ACCOUNT
+// ═══════════════════════════════════════════════════════════════════
+async function changePin(){
+  const cur=getPin('.cur-pin'),nw=getPin('.new-pin');
+  if(cur.length!==4||nw.length!==4){setMsg('pin-msg','Fill in both PINs.','err');return;}
+  try{
+    const res=await fetch(API+'/auth/change-pin',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({current_pin:cur,new_pin:nw})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    setMsg('pin-msg','✓ PIN updated','ok');clrPin('.cur-pin');clrPin('.new-pin');
+    setTimeout(()=>setMsg('pin-msg','',''),3000);
+  }catch(e){setMsg('pin-msg',e.message,'err');}
+}
+async function deleteAccount(){
+  closeOv('del-overlay');
+  try{await fetch(API+'/user/account',{method:'DELETE',headers:{'Authorization':'Bearer '+token}});}catch(_){}
+  doLogout();
+}
+async function sendTestEmail(){
+  const btn=document.getElementById('btn-test-email');
+  const msgEl=document.getElementById('test-email-msg');
+  btn.disabled=true;msgEl.textContent='Sending…';msgEl.className='';
+  try{
+    const res=await fetch(API+'/user/test-email',{method:'POST',headers:{'Authorization':'Bearer '+token}});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    msgEl.textContent='✓ '+data.message;msgEl.style.color='var(--green)';
+    setTimeout(()=>{msgEl.textContent='';},5000);
+  }catch(e){msgEl.textContent='✗ '+e.message;msgEl.style.color='var(--red)';}
+  finally{btn.disabled=false;}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEALS — PRELOAD + RENDER
+// ═══════════════════════════════════════════════════════════════════
+const DEPT_EMOJI={
+  'Meat':'🥩','Produce':'🥦','Dairy':'🧀','Deli':'🥪','Bakery':'🍞',
+  'Frozen':'🧊','Seafood':'🐟','Beverages':'🥤','Floral':'💐',
+  'Pharmacy':'💊','Health & Beauty':'💄','Household':'🧹','Baby':'👶',
+  'Pet':'🐾','Pets':'🐾','Natural Foods':'🌿','Snacks':'🍿',
+  'Canned & Packaged':'🥫','Breakfast':'🥞','Condiments':'🫙',
+  'International':'🌍','Pasta & Grains':'🍝','default':'🏷️'
+};
+function deptEmoji(d){
+  if(!d) return DEPT_EMOJI.default;
+  for(const[k,v] of Object.entries(DEPT_EMOJI)){if(d.toLowerCase().includes(k.toLowerCase()))return v;}
+  return DEPT_EMOJI.default;
+}
+
+// Preload: called on login and on store change. Skips if same store & already loaded.
+async function preloadDeals() {
+  const sid=prefs?.store_id;
+  if(!sid) return;
+  if(sid===_dealsStoreId && _allDeals.length>0) return; // already loaded for this store
+  await loadDeals(false);
+}
+
+async function loadDeals(forceRefresh=false){
+  const sid=prefs?.store_id;
+  if(!sid){
+    document.getElementById('deals-err').textContent='Set your store first (Store panel).';
+    document.getElementById('deals-err').style.display='';
+    return;
+  }
+  // Show loading state
+  document.getElementById('deals-err').style.display='none';
+  document.getElementById('deals-browser').style.display='none';
+  document.getElementById('deals-loading').style.display='block';
+  const refreshBtn=document.getElementById('btn-refresh-deals');
+  if(refreshBtn) refreshBtn.disabled=true;
+
+  try{
+    const res=await fetch(API+'/deals?store_id='+encodeURIComponent(sid),{headers:{'Authorization':'Bearer '+token}});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed to load deals');
+
+    _allDeals     = data.deals||[];
+    _dealCounts   = data.counts||{};
+    _deptCounts   = data.dept_counts||{};
+    _dealsUpdated = data.updated_at||'';
+    _dealsStoreId = sid;
+
+    // Update filter counts
+    document.getElementById('fcnt-weekly').textContent  = _dealCounts.weekly  ||'';
+    document.getElementById('fcnt-extra').textContent   = _dealCounts.extra   ||'';
+    document.getElementById('fcnt-stacked').textContent = _dealCounts.stacked ||'';
+    document.getElementById('fcnt-coupon').textContent  = _dealCounts.coupon  ||'';
+    document.getElementById('fcnt-publix').textContent  = _dealCounts.publix  ||'';
+
+    // Validity sublabels
+    const wa=_allDeals.find(d=>d.saving_type==='WeeklyAd'&&(d.valid_from||d.valid_thru));
+    const ex=_allDeals.find(d=>d.is_extra&&(d.valid_from||d.valid_thru));
+    if(wa){ document.getElementById('fsub-weekly').textContent=`Valid ${wa.valid_from} to ${wa.valid_thru}`; }
+    if(ex){ document.getElementById('fsub-extra').textContent =`Valid ${ex.valid_from} to ${ex.valid_thru}`; }
+
+    // Validity banner
+    if(wa){
+      const vb=document.getElementById('deals-vbar');
+      vb.innerHTML=`📅 Weekly Ad: Valid <strong>${wa.valid_from}</strong> to <strong>${wa.valid_thru}</strong> &nbsp;·&nbsp; ${_allDeals.length} total deals`;
+      vb.classList.add('vis');
+    }
+
+    // Dept filters
+    buildDeptFilters('dept-deals', _deptCounts, 'renderDeals');
+
+    const storeName=prefs?.store_name||('Store #'+sid);
+    document.getElementById('deals-sub').textContent=`${storeName} · ${_allDeals.length} all deals`;
+
+    document.getElementById('deals-loading').style.display='none';
+    document.getElementById('deals-browser').style.display='';
+    document.getElementById('deals-q').value='';
+    renderDeals();
+
+    // After deals load, compute matches
+    computeMatches();
+
+  }catch(e){
+    document.getElementById('deals-loading').style.display='none';
+    document.getElementById('deals-err').textContent=e.message;
+    document.getElementById('deals-err').style.display='';
+  }finally{
+    if(refreshBtn) refreshBtn.disabled=false;
+  }
+}
+
+function buildDeptFilters(containerId, deptCounts, renderFn){
+  const el=document.getElementById(containerId);
+  if(!el) return;
+  const depts=Object.keys(deptCounts).sort();
+  el.innerHTML=depts.map(dept=>`
+    <label class="filter-opt">
+      <input type="checkbox" class="dept-cb" data-container="${containerId}" data-dept="${escH(dept)}" onchange="${renderFn}()">
+      <div><div class="filter-opt-label">${escH(dept)}</div></div>
+      <span class="filter-opt-cnt">${deptCounts[dept]}</span>
+    </label>`).join('');
+}
+function getCheckedDepts(cid){
+  return [...document.querySelectorAll(`#${cid} .dept-cb:checked`)].map(c=>c.dataset.dept);
+}
+function clearDeptCB(cid, dept){
+  const el=document.querySelector(`#${cid} .dept-cb[data-dept="${dept}"]`);
+  if(el) el.checked=false;
+}
+
+function renderDeals(){
+  const q       =(document.getElementById('deals-q').value||'').toLowerCase();
+  const fW      =document.getElementById('f-weekly').checked;
+  const fE      =document.getElementById('f-extra').checked;
+  const fSt     =document.getElementById('f-stacked').checked;
+  const fCo     =document.getElementById('f-coupon').checked;
+  const fPu     =document.getElementById('f-publix').checked;
+  const depts   =getCheckedDepts('dept-deals');
+  const typeAny =fE||fSt||fCo||fPu;
+
+  let deals=_allDeals.filter(d=>{
+    if(fSt && d.is_stacked) return true;
+    if(fCo && d.has_coupon) return true;
+    if(fPu && d.is_publix_brand) return true;
+    if(fE  && d.is_extra) return true;
+    if(!typeAny && fW) return d.saving_type==='WeeklyAd';
+    if(!typeAny && !fW) return true;
+    if(fW && d.saving_type==='WeeklyAd') return true;
+    return false;
+  });
+  if(depts.length) deals=deals.filter(d=>depts.includes(d.department||''));
+  if(q) deals=deals.filter(d=>(d.title||'').toLowerCase().includes(q)||(d.description||'').toLowerCase().includes(q)||(d.brand||'').toLowerCase().includes(q)||(d.department||'').toLowerCase().includes(q));
+
+  document.getElementById('deals-meta').textContent=deals.length+' of '+_allDeals.length+' deals';
+
+  // Active chips
+  const chips=[];
+  if(fE)  chips.push(['Extra Savings','f-extra',null]);
+  if(fSt) chips.push(['Stacked Deals','f-stacked',null]);
+  if(fCo) chips.push(['Coupons','f-coupon',null]);
+  if(fPu) chips.push(['Publix Brand','f-publix',null]);
+  depts.forEach(d=>chips.push([d,null,'dept-deals']));
+  document.getElementById('deals-chips').innerHTML=chips.map(([lbl,id,cid])=>
+    `<span class="chip" onclick="${id?`document.getElementById('${id}').checked=false;renderDeals()`:
+    `clearDeptCB('${cid}','${escH(lbl)}');renderDeals()`}">${escH(lbl)} <span class="chip-x">×</span></span>`).join('');
+
+  const grid=document.getElementById('deals-grid');
+  if(!deals.length){grid.innerHTML='<div class="empty"><div class="empty-icon">🔍</div>No deals match your filters.</div>';return;}
+  grid.innerHTML=deals.map(d=>dealCardHtml(d)).join('');
+  syncDealCheckboxes();
+  attachDealCBListeners();
+}
+
+// Generate deal card HTML (checkbox overlay)
+function dealCardHtml(d){
+  const emoji=deptEmoji(d.department);
+  const img=d.image_url
+    ?`<img class="deal-card-img" src="${escH(d.image_url)}" alt="${escH(d.title)}" loading="lazy"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+       <div class="deal-card-img-ph" style="display:none">${emoji}</div>`
+    :`<div class="deal-card-img-ph">${emoji}</div>`;
+  const badges=[];
+  if(d.is_publix_brand) badges.push(`<span class="badge badge-publix">Publix</span>`);
+  if(d.has_coupon)      badges.push(`<span class="badge badge-coupon">Coupon</span>`);
+  if(d.is_extra)        badges.push(`<span class="badge badge-extra">Extra</span>`);
+  if(d.is_stacked)      badges.push(`<span class="badge badge-stacked">Stacked</span>`);
+  const cbId=`dcb-${d.id}`;
+  return `<div class="deal-card">
+    <div class="deal-add-wrap">
+      <input type="checkbox" class="deal-add-cb" id="${cbId}" data-title="${escH(d.title)}" data-id="${escH(d.id)}">
+      <label class="deal-add-lbl" for="${cbId}" title="Add to My List"></label>
+    </div>
+    ${img}
+    <div class="deal-card-body">
+      ${d.department?`<div class="deal-card-dept">${escH(d.department)}</div>`:''}
+      <div class="deal-card-title">${escH(d.title)}</div>
+      ${d.description?`<div class="deal-card-desc">${escH(d.description)}</div>`:''}
+      <div class="deal-card-price">${escH(d.savings||'')}</div>
+      ${d.save_line?`<div class="deal-card-save">${escH(d.save_line)}</div>`:''}
+      ${(d.valid_from||d.valid_thru)?`<div class="deal-card-valid">📅 Valid ${escH(d.valid_from)}–${escH(d.valid_thru)}</div>`:''}
+      ${d.fine_print?`<div class="deal-card-fine">${escH(d.fine_print)}</div>`:''}
+      ${badges.length?`<div class="deal-card-badges">${badges.join('')}</div>`:''}
+    </div></div>`;
+}
+
+// Sync checkbox states to match prefs.items
+function syncDealCheckboxes(){
+  const items=(prefs?.items||[]).map(s=>s.toLowerCase());
+  document.querySelectorAll('.deal-add-cb').forEach(cb=>{
+    const title=(cb.dataset.title||'').toLowerCase();
+    cb.checked = items.includes(title);
+  });
+}
+
+// Attach listeners to deal card checkboxes (called after render)
+function attachDealCBListeners(){
+  document.querySelectorAll('.deal-add-cb').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const title=cb.dataset.title||'';
+      if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
+      if(cb.checked){
+        if(!prefs.items.includes(title)) prefs.items.push(title);
+      } else {
+        prefs.items=prefs.items.filter(i=>i!==title);
+      }
+      renderItems();
+      savePrefs('list').catch(()=>{});
+      // Recompute matches after list changes
+      computeMatches();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MATCHES
+// ═══════════════════════════════════════════════════════════════════
+function computeMatches(){
+  if(!_allDeals.length) return;
+  const items  =(prefs?.items||[]);
+  const thresh =parseInt(document.getElementById('threshold').value)||75;
+
+  const seen=new Set();
+  _allMatches=[];
+  for(const deal of _allDeals){
+    const title=(deal.title||'').toLowerCase();
+    for(const item of items){
+      const score=fuzzyScore(item.toLowerCase(), title);
+      if(score>=thresh){
+        const key=deal.id||title;
+        if(!seen.has(key)){
+          seen.add(key);
+          _allMatches.push({...deal, my_item:item, match_score:score});
+        }
+      }
+    }
+  }
+  _allMatches.sort((a,b)=>b.match_score-a.match_score);
+
+  _matchDeptCts={};
+  _allMatches.forEach(d=>{const dep=(d.department||'Other').trim();_matchDeptCts[dep]=(_matchDeptCts[dep]||0)+1;});
+
+  buildDeptFilters('dept-matches',_matchDeptCts,'renderMatches');
+
+  // Update match filter counts
+  document.getElementById('mfcnt-weekly').textContent =_allMatches.filter(d=>d.saving_type==='WeeklyAd').length||'';
+  document.getElementById('mfcnt-extra').textContent  =_allMatches.filter(d=>d.is_extra).length||'';
+  document.getElementById('mfcnt-coupon').textContent =_allMatches.filter(d=>d.has_coupon).length||'';
+  document.getElementById('mfcnt-publix').textContent =_allMatches.filter(d=>d.is_publix_brand).length||'';
+
+  // Validity info
+  const firstDeal=_allDeals.find(d=>d.valid_from||d.valid_thru);
+  const banner=document.getElementById('matches-banner');
+  if(firstDeal){
+    banner.innerHTML=`📅 Week of <strong>${firstDeal.valid_from}–${firstDeal.valid_thru}</strong> &nbsp;·&nbsp; <strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
+  } else {
+    banner.innerHTML=`<strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
+  }
+
+  document.getElementById('matches-err').style.display='none';
+  document.getElementById('matches-loading').style.display='none';
+  document.getElementById('matches-browser').style.display=_allMatches.length||items.length?'':'none';
+  renderMatches();
+}
+
+function onThresholdChange(){
+  // Threshold is per user — save then recompute
+  savePrefs('matching').catch(()=>{});
+  computeMatches();
+}
+
+function fuzzyScore(item, title){
+  const iT=item.split(/\s+/).filter(Boolean);
+  const tT=title.split(/\s+/).filter(Boolean);
+  let m=0;
+  for(const t of iT){ if(tT.some(tt=>tt.includes(t)||t.includes(tt))) m++; }
+  if(!iT.length) return 0;
+  const p=m/iT.length, r=m/Math.max(tT.length,1);
+  return Math.round(2*p*r/(p+r+0.0001)*100);
+}
+
+function renderMatches(){
+  const q      =(document.getElementById('matches-q').value||'').toLowerCase();
+  const mfW    =document.getElementById('mf-weekly').checked;
+  const mfE    =document.getElementById('mf-extra').checked;
+  const mfCo   =document.getElementById('mf-coupon').checked;
+  const mfPu   =document.getElementById('mf-publix').checked;
+  const depts  =getCheckedDepts('dept-matches');
+  const typeAny=mfE||mfCo||mfPu;
+
+  let matches=_allMatches.filter(d=>{
+    if(mfCo && d.has_coupon) return true;
+    if(mfPu && d.is_publix_brand) return true;
+    if(mfE  && d.is_extra) return true;
+    if(!typeAny && mfW) return d.saving_type==='WeeklyAd';
+    if(!typeAny && !mfW) return true;
+    if(mfW && d.saving_type==='WeeklyAd') return true;
+    return false;
+  });
+  if(depts.length) matches=matches.filter(d=>depts.includes(d.department||''));
+  if(q) matches=matches.filter(d=>(d.title||'').toLowerCase().includes(q)||(d.my_item||'').toLowerCase().includes(q));
+
+  document.getElementById('matches-meta').textContent=matches.length+' match'+(matches.length!==1?'es':'')+' shown';
+
+  const chips=[];
+  if(mfE)  chips.push(['Extra Savings','mf-extra',null]);
+  if(mfCo) chips.push(['Coupons','mf-coupon',null]);
+  if(mfPu) chips.push(['Publix Brand','mf-publix',null]);
+  depts.forEach(d=>chips.push([d,null,'dept-matches']));
+  document.getElementById('matches-chips').innerHTML=chips.map(([lbl,id,cid])=>
+    `<span class="chip" onclick="${id?`document.getElementById('${id}').checked=false;renderMatches()`:
+    `clearDeptCB('${cid}','${escH(lbl)}');renderMatches()`}">${escH(lbl)} <span class="chip-x">×</span></span>`).join('');
+
+  const grid=document.getElementById('matches-grid');
+  if(!matches.length){
+    const items=prefs?.items||[];
+    const msg=!items.length
+      ?'Add items to your shopping list first.'
+      :`No matches found at threshold ${document.getElementById('threshold').value}. Try lowering the sensitivity.`;
+    grid.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div>${msg}</div>`;
+    return;
+  }
+  grid.innerHTML=matches.map(d=>{
+    const emoji=deptEmoji(d.department);
+    const img=d.image_url
+      ?`<img class="match-card-img" src="${escH(d.image_url)}" alt="${escH(d.title)}" loading="lazy"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+         <div class="match-card-img-ph" style="display:none">${emoji}</div>`
+      :`<div class="match-card-img-ph">${emoji}</div>`;
+    return `<div class="match-card">${img}
+      <div class="match-card-body">
+        <span class="match-myitem">${escH(d.my_item)}</span>
+        <div class="match-title">${escH(d.title)}</div>
+        ${d.description?`<div class="match-desc">${escH(d.description)}</div>`:''}
+        <div class="match-price">${escH(d.savings||'')}</div>
+        ${d.save_line?`<div class="match-save">${escH(d.save_line)}</div>`:''}
+        ${(d.valid_from||d.valid_thru)?`<div class="match-valid">📅 Valid ${escH(d.valid_from)}–${escH(d.valid_thru)}</div>`:''}
+        <div class="match-score">Match: ${d.match_score}%</div>
+      </div></div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN
+// ═══════════════════════════════════════════════════════════════════
+function initAdmin(){
+  if(adminKey){
+    document.getElementById('admin-login-sec').style.display='none';
+    document.getElementById('admin-dash').style.display='block';
+    adminLoadLogs(); adminLoadUsers();
+  }
+}
+function adminLogin(){
+  const s=document.getElementById('admin-secret-inp').value.trim();
+  if(!s){setMsg('admin-login-msg','Enter the admin secret.','err');return;}
+  adminKey=s;sessionStorage.setItem('pdc_admin',s);
+  document.getElementById('admin-login-sec').style.display='none';
+  document.getElementById('admin-dash').style.display='block';
+  adminLoadLogs();adminLoadUsers();
+}
+function adminHdrs(){return{'Content-Type':'application/json','Authorization':'AdminSecret '+adminKey};}
+
+async function adminLoadLogs(){
+  document.getElementById('admin-logs-el').innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:12px 0">Loading…</div>';
+  try{
+    const res=await fetch(API+'/admin/scrape-logs',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    const logs=data.logs||[];
+    const bar=document.getElementById('admin-scrape-bar');
+    if(logs.length){
+      const last=logs[0];
+      const dt=new Date(last.started_at);
+      const est=dt.toLocaleString('en-US',{timeZone:'America/New_York',month:'numeric',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+      bar.className='scrape-bar';
+      bar.innerHTML=`<span>Last import: <span class="scrape-stat">${est} ET</span></span>
+        <span><span class="scrape-stat">${last.stores_examined||0}</span> stores examined &nbsp;·&nbsp;
+              <span class="scrape-stat">${last.total_deals||0}</span> deals imported &nbsp;·&nbsp;
+              <span class="scrape-stat">${last.emails_sent||0}</span> emails sent</span>`;
+    } else {
+      bar.className='scrape-bar loading';
+      bar.innerHTML='<span>No scrape jobs recorded yet.</span>';
+    }
+    if(!logs.length){document.getElementById('admin-logs-el').innerHTML='<div style="color:var(--ink-soft);font-size:13px">No scrape jobs yet.</div>';return;}
+    document.getElementById('admin-logs-el').innerHTML=logs.map(log=>{
+      const dt=new Date(log.started_at);
+      const est=dt.toLocaleString('en-US',{timeZone:'America/New_York',month:'numeric',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+      const dur=log.finished_at?Math.round((new Date(log.finished_at)-dt)/1000)+'s':'–';
+      const errs=log.errors||[];
+      return `<div class="log-row">
+        <div class="log-icon">${errs.length?'⚠️':'✅'}</div>
+        <div class="log-detail">
+          <div class="log-summary">${log.stores_examined||0} stores · ${log.total_deals||0} deals · ${log.emails_sent||0} emails</div>
+          <div class="log-meta">${est} ET · ${dur}</div>
+          ${errs.length?`<div class="log-errors">${errs.slice(0,3).map(escH).join(' | ')}</div>`:''}
+        </div></div>`;
+    }).join('');
+  }catch(e){
+    const bar=document.getElementById('admin-scrape-bar');
+    bar.className='scrape-bar error';
+    bar.innerHTML=`<span>Error: ${escH(e.message)}</span>`;
+  }
+}
+async function adminRunScrape(btn){
+  btn.disabled=true;btn.textContent='Invoking…';
+  try{
+    const res=await fetch(API+'/admin/scrape-now',{method:'POST',headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    btn.textContent='✓ Invoked!';
+    setTimeout(()=>{btn.disabled=false;btn.textContent='▶ Run Now';},3000);
+    setTimeout(adminLoadLogs,35000);
+  }catch(e){alert('Error: '+e.message);btn.disabled=false;btn.textContent='▶ Run Now';}
+}
+async function adminLoadTail(){
+  const termEl=document.getElementById('admin-tail');
+  const loadEl=document.getElementById('admin-tail-loading');
+  loadEl.textContent='Fetching logs…';termEl.style.display='none';
+  try{
+    const res=await fetch(API+'/admin/logs/tail',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    const lines=data.lines||[];
+    if(!lines.length){loadEl.textContent='No log events found.';return;}
+    loadEl.textContent='';termEl.style.display='block';
+    termEl.innerHTML=lines.map(l=>{
+      const e=l.msg.toLowerCase().includes('error');
+      const o=l.msg.includes('Email sent')||l.msg.includes('Done.');
+      return `<div><span class="ts">${(l.ts||'').replace('T',' ').replace(/\..*/,'')}</span><span class="${e?'terr':o?'tok':''}">${escH(l.msg)}</span></div>`;
+    }).join('');
+    termEl.scrollTop=termEl.scrollHeight;
+  }catch(e){loadEl.textContent='Error: '+e.message;}
+}
+async function adminLoadUsers(){
+  try{
+    const res=await fetch(API+'/admin/users',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    const users=data.users||[];
+    document.getElementById('admin-user-ct').textContent=`(${users.length})`;
+    document.getElementById('admin-tbody').innerHTML=users.map(u=>`
+      <tr>
+        <td><strong>${escH(u.email)}</strong><br><span style="font-size:11px;color:var(--ink-soft)">${escH(u.created_at?.slice(0,10)||'')}</span></td>
+        <td><span style="font-size:12px">${escH(u.notify_email||u.email)}</span></td>
+        <td>${u.store_id?`<span style="font-family:var(--mono);font-size:12px">#${escH(u.store_id)}</span><br><span style="font-size:11px;color:var(--ink-soft)">${escH(u.store_name||'')}</span>`:'<span style="color:var(--ink-soft);font-size:12px">—</span>'}</td>
+        <td><button class="abn a" onclick="adminShowItems('${escH(u.email)}',${JSON.stringify(u.items).replace(/"/g,'&quot;')})">${u.item_count} item${u.item_count!==1?'s':''}</button></td>
+        <td style="font-size:11px;color:var(--ink-soft)">${escH(u.created_at?.slice(0,10)||'—')}</td>
+        <td><div style="display:flex;gap:5px;flex-wrap:wrap">
+          <button class="abn g" onclick="adminShowPin('${escH(u.email)}')">Reset PIN</button>
+          <button class="abn a" onclick="adminShowEmail('${escH(u.email)}')">Reset Email</button>
+          <button class="abn r" onclick="adminDelUser('${escH(u.email)}')">Delete</button>
+        </div></td>
+      </tr>`).join('');
+  }catch(e){document.getElementById('admin-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);font-size:13px">Error: ${escH(e.message)}</td></tr>`;}
+}
+function showCreateUser(){
+  document.getElementById('ac-email').value='';clrPin('.ac-pin');setMsg('ac-msg','','');
+  document.getElementById('admin-create-ov').classList.add('vis');
+}
+async function adminDoCreate(){
+  const em=document.getElementById('ac-email').value.trim().toLowerCase();
+  const pin=getPin('.ac-pin');
+  if(!em||pin.length!==4){setMsg('ac-msg','Enter email and 4-digit PIN.','err');return;}
+  try{
+    const res=await fetch(API+'/admin/users',{method:'POST',headers:adminHdrs(),body:JSON.stringify({email:em,pin})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    setMsg('ac-msg','✓ Created.','ok');
+    setTimeout(()=>{closeOv('admin-create-ov');adminLoadUsers();},1000);
+  }catch(e){setMsg('ac-msg',e.message,'err');}
+}
+async function adminDelUser(em){
+  if(!confirm(`Delete ${em}? Cannot be undone.`)) return;
+  try{
+    const res=await fetch(API+'/admin/users/'+encodeURIComponent(em),{method:'DELETE',headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    adminLoadUsers();
+  }catch(e){alert('Error: '+e.message);}
+}
+let _apEmail='';
+function adminShowPin(em){_apEmail=em;document.getElementById('apoe').textContent=em;clrPin('.ap-pin');setMsg('ap-msg','','');document.getElementById('admin-pin-ov').classList.add('vis');}
+async function adminDoResetPin(){
+  const pin=getPin('.ap-pin');if(pin.length!==4){setMsg('ap-msg','Enter 4-digit PIN.','err');return;}
+  try{
+    const res=await fetch(API+'/admin/users/'+encodeURIComponent(_apEmail)+'/reset-pin',{method:'POST',headers:adminHdrs(),body:JSON.stringify({new_pin:pin})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    setMsg('ap-msg','✓ PIN reset.','ok');setTimeout(()=>closeOv('admin-pin-ov'),1200);
+  }catch(e){setMsg('ap-msg',e.message,'err');}
+}
+let _aeEmail='';
+function adminShowEmail(em){_aeEmail=em;document.getElementById('aeoe').textContent=em;document.getElementById('ae-new-inp').value='';setMsg('ae-msg','','');document.getElementById('admin-email-ov').classList.add('vis');}
+async function adminDoResetEmail(){
+  const ne=document.getElementById('ae-new-inp').value.trim().toLowerCase();
+  if(!ne){setMsg('ae-msg','Enter new email.','err');return;}
+  try{
+    const res=await fetch(API+'/admin/users/'+encodeURIComponent(_aeEmail)+'/reset-email',{method:'POST',headers:adminHdrs(),body:JSON.stringify({new_email:ne})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    setMsg('ae-msg','✓ Updated.','ok');setTimeout(()=>{closeOv('admin-email-ov');adminLoadUsers();},1200);
+  }catch(e){setMsg('ae-msg',e.message,'err');}
+}
+let _aiEmail='';
+function adminShowItems(em,items){
+  _aiEmail=em;document.getElementById('ai-email').textContent=em;setMsg('ai-msg','','');
+  document.getElementById('ai-list').innerHTML=!items.length
+    ?'<p style="color:var(--ink-soft);font-style:italic">No items on list.</p>'
+    :`<ol style="padding-left:20px">${items.map(i=>`<li style="padding:3px 0">${escH(i)}</li>`).join('')}</ol>`;
+  document.getElementById('admin-items-ov').classList.add('vis');
+}
+async function adminClearItems(){
+  if(!confirm(`Clear all items for ${_aiEmail}?`)) return;
+  try{
+    const res=await fetch(API+'/admin/users/'+encodeURIComponent(_aiEmail)+'/items',{method:'DELETE',headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    setMsg('ai-msg','✓ Cleared.','ok');setTimeout(()=>{closeOv('admin-items-ov');adminLoadUsers();},1000);
+  }catch(e){setMsg('ai-msg',e.message,'err');}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function closeOv(id){document.getElementById(id).classList.remove('vis');}
+
+// ═══════════════════════════════════════════════════════════════════
+// AUTO-LOGIN
+// ═══════════════════════════════════════════════════════════════════
+(async function init(){
+  if(!token) return;
+  try{
+    const res=await fetch(API+'/user/prefs',{headers:{'Authorization':'Bearer '+token}});
+    if(!res.ok){localStorage.removeItem('pdc_token');localStorage.removeItem('pdc_email');return;}
+    const data=await res.json();
+    prefs=data.prefs;userEmail=data.email;
+    enterApp();
+  }catch(_){}
+})();
+
+document.querySelectorAll('.overlay').forEach(o=>{
+  o.addEventListener('click',e=>{if(e.target===o) o.classList.remove('vis');});
+});
+</script>
+</body>
+</html>

@@ -2,6 +2,13 @@
 # =============================================================================
 #  teardown.sh — Publix Deal Checker v4
 #  Removes all AWS resources.
+#
+#  By default, DynamoDB tables (and all user data) are PRESERVED.
+#  Pass --delete-data to also drop all four DynamoDB tables.
+#
+#  Usage:
+#    bash teardown.sh                  # keeps DynamoDB data
+#    bash teardown.sh --delete-data    # deletes DynamoDB data too
 # =============================================================================
 export MSYS_NO_PATHCONV=1
 AWS_REGION="us-east-1"
@@ -9,15 +16,30 @@ APP_NAME="publix-deal-checker"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 S3_FRONTEND="${APP_NAME}-frontend-${AWS_ACCOUNT_ID}"
 
+DELETE_DATA=false
+for arg in "$@"; do
+  [ "$arg" = "--delete-data" ] && DELETE_DATA=true
+done
+
 ok()   { echo "   ✓ Deleted: $*"; }
 skip() { echo "   - Not found: $*"; }
+keep() { echo "   ✦ Preserved: $*"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║   Publix Deal Checker v4 — Teardown                  ║"
+if [ "$DELETE_DATA" = "true" ]; then
+echo "║   ⚠️  --delete-data: DynamoDB tables WILL be deleted  ║"
+else
+echo "║   DynamoDB data will be PRESERVED (use --delete-data) ║"
+fi
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
-read -p "Delete ALL resources? (yes/no): " C
+if [ "$DELETE_DATA" = "true" ]; then
+  read -p "Delete ALL resources INCLUDING all user/deal data? (yes/no): " C
+else
+  read -p "Delete all AWS resources except DynamoDB data? (yes/no): " C
+fi
 [ "${C}" != "yes" ] && echo "Aborted." && exit 0
 
 echo "▶  EventBridge"
@@ -41,9 +63,16 @@ aws iam delete-role-policy --role-name "${ROLE}" --policy-name "${APP_NAME}-lamb
 aws iam delete-role        --role-name "${ROLE}" > /dev/null 2>&1 && ok "IAM role" || skip "IAM role"
 
 echo "▶  DynamoDB tables"
-for tbl in "${APP_NAME}-users" "${APP_NAME}-sessions" "${APP_NAME}-deals" "${APP_NAME}-scrape-logs"; do
-  aws dynamodb delete-table --table-name "${tbl}" --region "${AWS_REGION}" > /dev/null 2>&1 && ok "DynamoDB: ${tbl}" || skip "DynamoDB: ${tbl}"
-done
+if [ "$DELETE_DATA" = "true" ]; then
+  for tbl in "${APP_NAME}-users" "${APP_NAME}-sessions" "${APP_NAME}-deals" "${APP_NAME}-scrape-logs"; do
+    aws dynamodb delete-table --table-name "${tbl}" --region "${AWS_REGION}" > /dev/null 2>&1 && ok "DynamoDB: ${tbl}" || skip "DynamoDB: ${tbl}"
+  done
+else
+  for tbl in "${APP_NAME}-users" "${APP_NAME}-sessions" "${APP_NAME}-deals" "${APP_NAME}-scrape-logs"; do
+    keep "DynamoDB: ${tbl}"
+  done
+  echo "   → Re-run with --delete-data to remove all DynamoDB tables and user data."
+fi
 
 echo "▶  SSM parameters"
 for p in resend-api-key resend-from-name resend-from-addr; do
@@ -61,6 +90,10 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║  ✅  Teardown complete.                               ║"
+if [ "$DELETE_DATA" = "true" ]; then
+echo "║  ✅  Teardown complete (all data deleted).            ║"
+else
+echo "║  ✅  Teardown complete (DynamoDB data preserved).     ║"
+fi
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""

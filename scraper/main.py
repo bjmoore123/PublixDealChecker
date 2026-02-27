@@ -23,7 +23,8 @@ USERS_TABLE     = os.environ["USERS_TABLE"]
 DEALS_TABLE     = os.environ["DEALS_TABLE"]
 SCRAPE_LOGS_TBL = os.environ.get("SCRAPE_LOGS_TABLE", "publix-deal-checker-scrape-logs")
 
-resend.api_key = os.environ["RESEND_API_KEY"]
+resend.api_key  = os.environ["RESEND_API_KEY"]
+FRONTEND_URL    = os.environ.get("FRONTEND_URL", "")
 RESEND_FROM    = (
     f"{os.environ.get('RESEND_FROM_NAME','Publix Alerts')} "
     f"<{os.environ.get('RESEND_FROM_ADDR','onboarding@resend.dev')}>"
@@ -33,6 +34,8 @@ dynamodb        = boto3.resource("dynamodb", region_name=AWS_REGION)
 users_table     = dynamodb.Table(USERS_TABLE)
 deals_table     = dynamodb.Table(DEALS_TABLE)
 scrape_logs_tbl = dynamodb.Table(SCRAPE_LOGS_TBL)
+APP_LOGS_TBL    = os.environ.get("APP_LOGS_TABLE", "publix-deal-checker-app-logs")
+app_logs_tbl    = dynamodb.Table(APP_LOGS_TBL)
 
 
 # ── DynamoDB helpers ──────────────────────────────────────────────────────────
@@ -43,6 +46,27 @@ def to_python(obj):
     if isinstance(obj, dict):  return {k: to_python(v) for k, v in obj.items()}
     if isinstance(obj, list):  return [to_python(i) for i in obj]
     return obj
+
+
+def _log_email(to: str, subject: str, ok: bool, user: str = "", message: str = ""):
+    """Log an email delivery attempt to app_logs DynamoDB table."""
+    try:
+        import secrets as _sec
+        now = datetime.now(timezone.utc).isoformat()
+        app_logs_tbl.put_item(Item={
+            "log_id":  f"{now}#{_sec.token_hex(4)}",
+            "ts":      now,
+            "source":  "email",
+            "level":   "info" if ok else "error",
+            "ok":      ok,
+            "to":      to,
+            "subject": subject[:120],
+            "trigger": "scheduled",
+            "user":    user,
+            "message": message[:200],
+        })
+    except Exception:
+        pass
 
 
 def get_all_users() -> list[dict]:
@@ -57,12 +81,30 @@ def get_all_users() -> list[dict]:
     return [to_python(u) for u in items]
 
 
+CHUNK_SIZE = 200  # deals per DynamoDB row (~200 rows * ~200 bytes = ~40KB per chunk, well under 400KB)
+
 def cache_deals(store_id: str, deals: list[dict]):
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    chunks = [deals[i:i+CHUNK_SIZE] for i in range(0, max(len(deals), 1), CHUNK_SIZE)]
+    num_chunks = len(chunks)
+
+    # Write each chunk as store_id#N
+    for i, chunk in enumerate(chunks):
+        deals_table.put_item(Item={
+            "store_id":    f"{store_id}#{i}",
+            "fetched_at":  fetched_at,
+            "deals":       json.dumps(chunk),
+            "count":       len(chunk),
+            "num_chunks":  num_chunks,
+            "chunk_index": i,
+        })
+
+    # Write an index row at store_id (no deals, just metadata)
     deals_table.put_item(Item={
         "store_id":   store_id,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "deals":      json.dumps(deals),
+        "fetched_at": fetched_at,
         "count":      len(deals),
+        "num_chunks": num_chunks,
     })
 
 
@@ -76,7 +118,7 @@ def write_scrape_log(log: dict):
 
 # ── Email ─────────────────────────────────────────────────────────────────────
 
-def build_html(matches: list[dict], store_id: str, store_name: str) -> str:
+def build_html(matches: list[dict], store_id: str, store_name: str, frontend_url: str = "") -> str:
     today = date.today().strftime("%B %d, %Y")
     rows  = ""
     for m in matches:
@@ -86,6 +128,11 @@ def build_html(matches: list[dict], store_id: str, store_name: str) -> str:
         valid = ""
         if m.get("valid_from") or m.get("valid_thru"):
             valid = f'<div style="font-size:11px;color:#888;">Valid {m.get("valid_from","")}–{m.get("valid_thru","")}</div>'
+        coupon_link = ""
+        if m.get("has_coupon"):
+            cid = m.get("coupon_id", "")
+            coupon_url = f"https://www.publix.com/savings/digital-coupons{f'?cid={cid}' if cid else ''}"
+            coupon_link = f'<div style="margin-top:4px;"><a href="{coupon_url}" style="font-size:11px;font-weight:700;color:#6b21a8;text-decoration:none;border:1px solid #6b21a8;border-radius:4px;padding:2px 7px;">✂️ Clip Coupon</a></div>'
         rows += f"""
         <tr style="border-bottom:1px solid #eee;">
           <td style="padding:10px 8px;width:64px;">{img}</td>
@@ -95,6 +142,7 @@ def build_html(matches: list[dict], store_id: str, store_name: str) -> str:
             {f'<div style="font-size:12px;color:#555;">{m["description"]}</div>' if m.get('description') else ''}
             {f'<div style="font-size:11px;color:#999;">{m["fine_print"]}</div>' if m.get('fine_print') else ''}
             {valid}
+            {coupon_link}
           </td>
           <td style="padding:10px 8px;text-align:right;white-space:nowrap;">
             <div style="font-size:20px;font-weight:700;color:#1a6b3c;">{m.get('savings','')}</div>
@@ -116,34 +164,46 @@ def build_html(matches: list[dict], store_id: str, store_name: str) -> str:
         <tbody>{rows}</tbody>
       </table>
       <div style="padding:16px;background:#f0f7f3;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;text-align:center;">
-        <a href="https://www.publix.com/savings/weekly-ad/view-all"
+        <a href="{frontend_url or 'https://www.publix.com/savings/weekly-ad/view-all'}"
            style="background:#1a6b3c;color:white;padding:10px 24px;border-radius:4px;text-decoration:none;font-weight:600;">
-          View Full Weekly Ad &#x2197;
+          View My Matches &#x2197;
         </a>
       </div>
     </body></html>"""
 
 
-def send_alert(notify_email: str, matches: list[dict], store_id: str, store_name: str):
-    today = date.today().strftime("%B %d")
-    resend.Emails.send({
-        "from":    RESEND_FROM,
-        "to":      [notify_email],
-        "subject": f"\U0001f6d2 Publix Deals \u2014 {len(matches)} item(s) on sale ({today})",
-        "html":    build_html(matches, store_id, store_name),
-    })
-    print(f"   Email sent \u2192 {notify_email}")
-
+def send_alert(notify_email: str, matches: list[dict], store_id: str, store_name: str,
+               account_email: str = ""):
+    today   = date.today().strftime("%B %d")
+    subject = f"🛒 Publix Deals — {len(matches)} item(s) on sale ({today})"
+    try:
+        resend.Emails.send({
+            "from":    RESEND_FROM,
+            "to":      [notify_email],
+            "subject": subject,
+            "html":    build_html(matches, store_id, store_name, FRONTEND_URL),
+        })
+        _log_email(notify_email, subject, ok=True, user=account_email)
+        print(f"   Email sent → {notify_email}")
+    except Exception as exc:
+        _log_email(notify_email, subject, ok=False, user=account_email, message=str(exc)[:200])
+        print(f"   Email FAILED → {notify_email}: {exc}")
+        raise
 
 # ── Lambda handler ────────────────────────────────────────────────────────────
 
 def handler(event, context):
-    """Lambda entry point \u2014 called by EventBridge weekly."""
-    main()
+    """Lambda entry point — called by EventBridge weekly or manually."""
+    # Only send emails when triggered by the EventBridge scheduled rule.
+    # Manual invocations (admin panel, CLI) just scrape and cache without emailing.
+    source = event.get("source", "")
+    detail_type = event.get("detail-type", "")
+    send_emails = (source == "aws.events") or (detail_type == "Scheduled Event")
+    main(send_emails=send_emails)
     return {"statusCode": 200, "body": "Done."}
 
 
-def main():
+def main(send_emails: bool = False):
     started_at = datetime.now(timezone.utc)
     print(f"\nPublix Deal Checker \u2014 {date.today()}")
     print("=" * 50)
@@ -211,13 +271,14 @@ def main():
             account_email = user["email"]
             prefs         = user.get("prefs") or {}
             notify_email  = (prefs.get("notify_email") or account_email).strip()
+            email_enabled = prefs.get("email_enabled", True)  # default True for existing users
             items         = prefs.get("items") or []
             matching      = prefs.get("matching") or {}
 
-            print(f"  Matching for {account_email} ({len(items)} items)\u2026")
+            print(f"  Matching for {account_email} ({len(items)} items)…")
 
             if not items:
-                print(f"    No items on list \u2014 skipping email")
+                print(f"    No items on list — skipping email")
                 continue
 
             matches = match_deals_for_user(deals, items, matching)
@@ -226,21 +287,27 @@ def main():
                 print(f"    No matches this week")
                 continue
 
-            print(f"    {len(matches)} match(es) \u2014 sending to {notify_email}")
-            try:
-                send_alert(notify_email, matches, store_id, store_name)
-                job["emails_sent"] += 1
-                store_info["emails"] += 1
-            except Exception as e:
-                msg = f"ERROR sending email to {notify_email}: {e}"
-                print(f"    {msg}")
-                job["errors"].append(msg)
+            if not send_emails:
+                print(f"    {len(matches)} match(es) found — skipping email (manual run)")
+            elif not email_enabled:
+                print(f"    {len(matches)} match(es) found — skipping email (user opted out)")
+            else:
+                print(f"    {len(matches)} match(es) — sending to {notify_email}")
+                try:
+                    send_alert(notify_email, matches, store_id, store_name, account_email=account_email)
+                    job["emails_sent"] += 1
+                    store_info["emails"] += 1
+                except Exception as e:
+                    msg = f"ERROR sending email to {notify_email}: {e}"
+                    print(f"    {msg}")
+                    job["errors"].append(msg)
 
         job["store_details"].append(store_info)
 
     job["finished_at"] = datetime.now(timezone.utc).isoformat()
     write_scrape_log(job)
-    print("\nDone.")
+    mode = "scheduled (emails sent)" if send_emails else "manual (no emails)"
+    print(f"\nDone. [{mode}]")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Publix Deal Checker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🛒</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -97,13 +98,40 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .btn-test:disabled{opacity:.5;cursor:not-allowed}
 
 /* STORE */
-.store-sel{display:none;align-items:flex-start;gap:14px;background:var(--green-bg);border:1.5px solid var(--green-dim);border-radius:10px;padding:14px 16px;margin-bottom:16px}
-.store-sel.vis{display:flex}
-.store-sel-name{font-weight:700;font-size:15px;color:var(--green)}
-.store-sel-addr{font-size:13px;color:var(--ink-mid);margin-top:2px}
-.store-sel-id{font-size:11px;font-family:var(--mono);color:var(--ink-soft);margin-top:3px}
-.store-change{color:var(--green);font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;white-space:nowrap}
-.store-help{background:var(--amber-bg);border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:12px;color:var(--amber);margin-top:8px;line-height:1.6}
+/* Store panel */
+.store-search-wrap{position:relative}
+.store-search-input{width:100%;padding:11px 40px 11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;transition:border-color var(--t);box-sizing:border-box}
+.store-search-input:focus{border-color:var(--green)}
+.store-search-icon{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:16px;pointer-events:none;color:var(--ink-soft)}
+.store-results{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.store-result-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer;transition:all var(--t);background:var(--white)}
+.store-result-item:hover{border-color:var(--green);background:var(--green-bg)}
+.store-result-thumb{width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--green-bg)}
+.store-result-thumb-ph{width:44px;height:44px;border-radius:6px;background:var(--green-bg);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.store-result-name{font-weight:700;font-size:13px;color:var(--ink)}
+.store-result-addr{font-size:12px;color:var(--ink-mid);margin-top:1px}
+.store-result-dist{font-size:11px;color:var(--ink-soft);margin-top:1px}
+.store-no-results{font-size:13px;color:var(--ink-soft);padding:12px 0;text-align:center}
+/* Selected store card */
+.store-card{border-radius:12px;overflow:hidden;border:1.5px solid var(--green-dim);background:var(--white);box-shadow:var(--sh-sm);margin-bottom:4px}
+.store-card-hero{width:100%;height:140px;object-fit:cover;display:block}
+.store-card-hero-ph{width:100%;height:140px;background:linear-gradient(135deg,var(--green) 0%,var(--green-lt) 100%);display:flex;align-items:center;justify-content:center;font-size:48px}
+.store-card-body{padding:16px}
+.store-card-name{font-family:var(--serif);font-size:20px;color:var(--green);margin-bottom:2px}
+.store-card-id{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin-bottom:10px}
+.store-card-row{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink-mid);margin-bottom:6px}
+.store-card-row-icon{font-size:14px;flex-shrink:0;margin-top:1px}
+.store-card-row a{color:var(--green);text-decoration:none}
+.store-card-row a:hover{text-decoration:underline}
+.store-card-footer{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--border);background:var(--green-bg)}
+.store-card-footer .btn-change{color:var(--ink-mid);font-size:12px;font-weight:700;cursor:pointer;background:none;border:1.5px solid var(--border);border-radius:6px;padding:5px 12px;transition:all var(--t)}
+.store-card-footer .btn-change:hover{border-color:var(--red);color:var(--red)}
+.store-hours-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:4px}
+.store-hour-day{text-align:center;font-size:10px}
+.store-hour-day-name{color:var(--ink-soft);text-transform:uppercase;font-weight:700;letter-spacing:.03em}
+.store-hour-time{color:var(--ink-mid);margin-top:1px;line-height:1.3}
+.store-hour-day.today .store-hour-day-name{color:var(--green)}
+.store-hour-day.today .store-hour-time{font-weight:700;color:var(--green)}
 
 /* ITEMS */
 .items-add{display:flex;gap:8px;margin-bottom:14px}
@@ -146,10 +174,10 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 
 .filter-sec{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:14px 16px;margin-bottom:10px;box-shadow:var(--sh-sm)}
 .filter-hd{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
-.filter-opt{display:flex;align-items:flex-start;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0ede8;cursor:pointer;gap:8px}
+.filter-opt{display:flex;align-items:flex-start;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0ede8;cursor:pointer;gap:8px;text-align:center}
 .filter-opt:last-child{border-bottom:none}
 .filter-opt input[type=checkbox]{accent-color:var(--green);margin-top:2px;flex-shrink:0;width:15px;height:15px;cursor:pointer}
-.filter-opt-label{font-size:13px;font-weight:600;color:var(--ink);flex:1;line-height:1.3}
+.filter-opt-label{font-size:13px;font-weight:600;color:var(--ink);flex:1;line-height:1.3;text-align:left}
 .filter-opt-sub{font-size:10px;color:var(--ink-soft);margin-top:1px}
 .filter-opt-cnt{font-size:11px;color:var(--ink-soft);font-family:var(--mono);white-space:nowrap;flex-shrink:0}
 
@@ -253,6 +281,31 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .abn.a{border-color:var(--amber);color:var(--amber);background:var(--amber-bg)}.abn.a:hover{background:#fef3c7}
 .adm-sec{margin-bottom:28px}
 .adm-sec-title{font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+/* Admin sidebar layout */
+.adm-layout{display:flex;gap:0;min-height:500px}
+.adm-sidebar{width:160px;flex-shrink:0;border-right:1px solid var(--border);padding:4px 0;margin-right:24px}
+.adm-sidebar-item{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;font-size:13px;font-weight:500;border:none;background:none;cursor:pointer;color:var(--ink-soft);border-radius:8px;transition:var(--t);text-align:left;box-sizing:border-box}
+.adm-sidebar-item:hover{background:var(--green-bg);color:var(--ink)}
+.adm-sidebar-item.active{background:var(--green-bg);color:var(--green);font-weight:700}
+.adm-sidebar-item .adm-si-icon{font-size:15px;width:20px;text-align:center;flex-shrink:0}
+.adm-content{flex:1;min-width:0}
+.adm-subpage{display:none}.adm-subpage.active{display:block}
+@media(max-width:600px){.adm-layout{flex-direction:column}.adm-sidebar{width:100%;border-right:none;border-bottom:1px solid var(--border);padding:0 0 8px;margin-right:0;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:4px}.adm-sidebar-item{width:auto;padding:6px 12px;font-size:12px}}
+/* Auth log table */
+.auth-log-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.auth-log-tbl th{padding:8px 10px;background:var(--green);color:white;text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.auth-log-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.auth-log-tbl tr:hover td{background:var(--green-bg)}
+.auth-log-tbl tr:last-child td{border-bottom:none}
+.auth-log-tbl .fail{color:var(--red)}.auth-log-tbl .ok{color:var(--green)}
+/* App log rows */
+.app-log-row{font-family:var(--mono);font-size:11px;padding:5px 8px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:baseline}
+.app-log-row:last-child{border-bottom:none}
+.app-log-row .alts{color:var(--ink-soft);white-space:nowrap;flex:0 0 140px}
+.app-log-row .alsrc{font-weight:700;flex:0 0 70px}
+.app-log-row .almsg{color:var(--ink);word-break:break-all}
+.app-log-row.lv-error .almsg{color:var(--red)}
+.app-log-row.lv-warn .almsg{color:var(--amber)}
 
 /* MODAL */
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center;padding:24px}
@@ -260,6 +313,33 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .dialog{background:white;border-radius:14px;padding:28px;max-width:420px;width:100%;box-shadow:var(--sh-lg)}
 .dialog h3{font-size:18px;font-weight:700;margin-bottom:10px}
 .dialog p{font-size:14px;color:var(--ink-mid);margin-bottom:20px;line-height:1.5}
+/* Welcome modal */
+.wlc-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:center;justify-content:center;padding:20px}
+.wlc-overlay.vis{display:flex}
+.wlc-modal{background:var(--white);border-radius:20px;max-width:480px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden;animation:wlcIn .32s cubic-bezier(.22,1,.36,1)}
+@keyframes wlcIn{from{opacity:0;transform:translateY(24px) scale(.97)}to{opacity:1;transform:none}}
+.wlc-header{background:var(--green);padding:28px 32px 24px;color:white;position:relative}
+.wlc-header h2{font-family:var(--serif);font-size:28px;font-weight:400;margin-bottom:4px}
+.wlc-header p{font-size:13px;opacity:.78}
+.wlc-body{padding:28px 32px}
+.wlc-step{display:none}.wlc-step.active{display:block}
+.wlc-steps-row{display:flex;gap:6px;justify-content:center;margin-bottom:24px}
+.wlc-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .2s}
+.wlc-dot.active{background:var(--green)}
+.wlc-feature{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px}
+.wlc-icon{width:40px;height:40px;border-radius:10px;background:var(--green-bg);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.wlc-feature h4{font-size:14px;font-weight:700;margin-bottom:3px;color:var(--ink)}
+.wlc-feature p{font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0}
+.wlc-step-title{font-family:var(--serif);font-size:22px;font-weight:400;margin-bottom:6px;color:var(--ink)}
+.wlc-step-sub{font-size:13px;color:var(--ink-soft);margin-bottom:22px;line-height:1.5}
+.wlc-instruction{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;padding:12px 14px;background:var(--green-bg);border-radius:10px;border:1px solid var(--green-dim)}
+.wlc-num{width:24px;height:24px;border-radius:50%;background:var(--green);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.wlc-instruction p{font-size:13px;color:var(--ink-mid);line-height:1.5;margin:0}
+.wlc-footer{display:flex;align-items:center;justify-content:space-between;padding:0 32px 24px}
+.wlc-skip{font-size:12px;color:var(--ink-soft);background:none;border:none;cursor:pointer;padding:8px 0}
+.wlc-skip:hover{color:var(--ink)}
+.wlc-next{padding:11px 28px;background:var(--green);color:white;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;transition:background var(--t)}
+.wlc-next:hover{background:var(--green-lt)}
 .dlg-btns{display:flex;gap:10px;justify-content:flex-end}
 .btn-cancel{padding:9px 18px;background:var(--green-bg);color:var(--green);border:1.5px solid var(--green-dim);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
 
@@ -276,9 +356,80 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .spinning{display:inline-block;width:18px;height:18px;border:2.5px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* BURGER MENU */
+.burger{display:none;flex-direction:column;gap:5px;background:none;border:none;cursor:pointer;padding:6px;border-radius:6px;transition:background var(--t)}
+.burger:hover{background:rgba(255,255,255,.15)}
+.burger span{display:block;width:22px;height:2px;background:white;border-radius:2px;transition:var(--t)}
+
+/* MOBILE NAV DRAWER */
+.mobile-nav{display:none;position:fixed;inset:0;z-index:300}
+.mobile-nav.open{display:block}
+.mobile-nav-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+.mobile-nav-drawer{position:absolute;top:0;left:0;bottom:0;width:240px;background:var(--white);box-shadow:var(--sh-lg);padding:0;display:flex;flex-direction:column;transform:translateX(-100%);transition:transform .22s ease}
+.mobile-nav.open .mobile-nav-drawer{transform:translateX(0)}
+.mobile-nav-hd{background:var(--green);color:white;padding:16px 20px;font-family:var(--serif);font-size:17px;display:flex;align-items:center;justify-content:space-between}
+.mobile-nav-close{background:none;border:none;color:white;font-size:22px;cursor:pointer;line-height:1;padding:0 4px}
+.mobile-nav-body{padding:12px 8px;flex:1;overflow-y:auto}
+
 /* RESPONSIVE */
 @media(max-width:900px){.filter-col{display:none}.deals-layout{flex-direction:column}}
-@media(max-width:680px){.sidebar{display:none}.main-content{padding:20px 0}.topbar{padding:0 16px}.tb-email{display:none}.app-layout{padding:0 12px}.card{padding:16px}.deals-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+@media(max-width:680px){
+  .sidebar{display:none}
+  .burger{display:flex}
+  .main-content{padding:20px 0}
+  .topbar{padding:0 16px}
+  .tb-email{display:none}
+  .app-layout{padding:0 12px}
+  .card{padding:16px}
+  .deals-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+}
+
+/* Auto-save toast */
+#save-toast{position:fixed;bottom:24px;right:24px;background:var(--green);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.18);opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s;pointer-events:none;z-index:9999}
+#save-toast.show{opacity:1;transform:translateY(0)}
+
+.btn-clip{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:5px 10px;background:var(--purple-bg);color:var(--purple);border:1.5px solid var(--purple);border-radius:6px;font-size:11px;font-weight:700;text-decoration:none;cursor:pointer;transition:background var(--t)}
+.btn-clip:hover{background:var(--purple);color:#fff}
+
+/* Autocomplete dropdown */
+.ac-wrap{position:relative;flex:1}
+.ac-drop{position:absolute;top:100%;left:0;right:0;background:var(--white);border:1.5px solid var(--green);border-top:none;border-radius:0 0 8px 8px;max-height:240px;overflow-y:auto;z-index:500;box-shadow:0 6px 20px rgba(0,0,0,.1)}
+.ac-item{padding:9px 12px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.ac-item:last-child{border-bottom:none}
+.ac-item:hover,.ac-item.ac-sel{background:var(--green-bg)}
+.ac-item-free{font-weight:700;color:var(--green)}
+.ac-item-free::before{content:'✏️ ';font-size:11px}
+.ac-item-deal::before{content:'🏷️ ';font-size:11px;opacity:.6}
+
+/* Admin stats */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:10px;padding:14px 16px;text-align:center}
+.stat-val{font-size:28px;font-weight:800;color:var(--green);font-family:var(--mono)}
+.stat-lbl{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+.stats-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:600px){.stats-two{grid-template-columns:1fr}}
+.stat-list{list-style:none;padding:0;margin:0}
+.stat-list li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
+.stat-list li:last-child{border-bottom:none}
+.stat-list .sl-bar-wrap{flex:1;margin:0 10px;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.stat-list .sl-bar{height:100%;background:var(--green);border-radius:3px;transition:width .4s}
+.stat-list .sl-ct{font-family:var(--mono);font-size:12px;color:var(--ink-soft);min-width:20px;text-align:right}
+.stat-month-chart{display:flex;align-items:flex-end;gap:4px;height:60px;margin-top:8px}
+.smc-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+.smc-bar{width:100%;background:var(--green);border-radius:3px 3px 0 0;min-height:2px;transition:height .4s}
+.smc-lbl{font-size:9px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* Email toggle */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);margin-bottom:12px}
+.toggle-row:last-of-type{border-bottom:none;margin-bottom:0}
+.toggle-label{font-size:14px;font-weight:600;color:var(--ink)}
+.toggle-hint{font-size:12px;color:var(--ink-soft);margin-top:2px}
+.toggle-switch{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;background:var(--border);border-radius:24px;cursor:pointer;transition:background var(--t)}
+.toggle-switch input:checked+.toggle-track{background:var(--green)}
+.toggle-track::after{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform var(--t);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.toggle-switch input:checked+.toggle-track::after{transform:translateX(20px)}
 </style>
 </head>
 <body>
@@ -296,10 +447,10 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
         <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email"></div>
       <div class="field"><label>4-digit PIN</label>
         <div class="pin-wrap">
-          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-          <input class="pin-d auth-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+          <input class="pin-d auth-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·" autocomplete="off">
+          <input class="pin-d auth-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·" autocomplete="off">
+          <input class="pin-d auth-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·" autocomplete="off">
+          <input class="pin-d auth-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·" autocomplete="off">
         </div></div>
       <button class="btn-primary" id="auth-btn" onclick="doAuth()">Sign In</button>
       <div class="msg" id="auth-msg"></div>
@@ -310,10 +461,36 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 <!-- APP -->
 <div id="app-screen">
   <div class="topbar">
-    <div class="tb-brand">Publix Deal Checker</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="burger" id="burger-btn" onclick="openMobileNav()" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="tb-brand">Publix Deal Checker</div>
+    </div>
     <div class="tb-right">
       <span class="tb-email" id="topbar-email"></span>
       <button class="btn-ghost" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <!-- MOBILE NAV DRAWER -->
+  <div class="mobile-nav" id="mobile-nav">
+    <div class="mobile-nav-backdrop" onclick="closeMobileNav()"></div>
+    <div class="mobile-nav-drawer">
+      <div class="mobile-nav-hd">
+        <span>Menu</span>
+        <button class="mobile-nav-close" onclick="closeMobileNav()">✕</button>
+      </div>
+      <div class="mobile-nav-body">
+        <button class="nav-item" onclick="showPanel('store');closeMobileNav()"   id="mnav-store">  <span class="nav-icon">🏪</span> Store</button>
+        <button class="nav-item" onclick="showPanel('deals');closeMobileNav()"   id="mnav-deals">  <span class="nav-icon">🏷️</span> Deals</button>
+        <button class="nav-item" onclick="showPanel('matches');closeMobileNav()" id="mnav-matches"><span class="nav-icon">🎯</span> My Matches</button>
+        <button class="nav-item" onclick="showPanel('list');closeMobileNav()"    id="mnav-list">   <span class="nav-icon">📋</span> My List</button>
+        <button class="nav-item" onclick="showPanel('schedule');closeMobileNav()"id="mnav-schedule"><span class="nav-icon">🔔</span> Notifications</button>
+        <button class="nav-item" onclick="showPanel('account');closeMobileNav()" id="mnav-account"><span class="nav-icon">👤</span> Account</button>
+        <div class="nav-sep"></div>
+        <button class="nav-item" onclick="showPanel('admin');closeMobileNav()"   id="mnav-admin">  <span class="nav-icon">⚙️</span> Admin</button>
+      </div>
     </div>
   </div>
   <div class="app-layout">
@@ -322,7 +499,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       <button class="nav-item"        onclick="showPanel('deals')"   id="nav-deals">  <span class="nav-icon">🏷️</span> Deals</button>
       <button class="nav-item"        onclick="showPanel('matches')" id="nav-matches"><span class="nav-icon">🎯</span> My Matches</button>
       <button class="nav-item"        onclick="showPanel('list')"    id="nav-list">   <span class="nav-icon">📋</span> My List</button>
-      <button class="nav-item"        onclick="showPanel('schedule')"id="nav-schedule"><span class="nav-icon">📅</span> Schedule</button>
+      <button class="nav-item"        onclick="showPanel('schedule')"id="nav-schedule"><span class="nav-icon">🔔</span> Notifications</button>
       <button class="nav-item"        onclick="showPanel('account')" id="nav-account"><span class="nav-icon">👤</span> Account</button>
       <div class="nav-sep"></div>
       <button class="nav-item"        onclick="showPanel('admin')"   id="nav-admin">  <span class="nav-icon">⚙️</span> Admin</button>
@@ -333,35 +510,32 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 <!-- ══ STORE ══════════════════════════════════════════════════════════════ -->
 <div class="panel active" id="panel-store">
   <div class="panel-title">Store Settings</div>
-  <div class="panel-sub">Choose which Publix location to track deals for.</div>
-  <div class="card">
-    <div class="card-title">Your Store</div>
-    <div class="store-sel" id="store-sel">
-      <div style="font-size:24px">🏪</div>
-      <div style="flex:1;min-width:0">
-        <div class="store-sel-name"  id="ss-name"></div>
-        <div class="store-sel-addr"  id="ss-addr"></div>
-        <div class="store-sel-id"    id="ss-id-disp"></div>
+  <div class="panel-sub">Find and set your Publix location to see the right deals.</div>
+
+  <!-- Selected store card (shown when store is set) -->
+  <div id="store-card-wrap" style="display:none;margin-bottom:16px">
+    <div class="store-card" id="store-card-el"></div>
+  </div>
+
+  <!-- Search UI (shown when no store set) -->
+  <div id="store-search-ui">
+    <div class="card">
+      <div class="card-title">Find Your Store</div>
+      <div class="store-search-wrap">
+        <input type="text" id="store-id-input" class="store-search-input"
+          placeholder="City, ZIP code, or store #…"
+          autocomplete="off"
+          oninput="onStoreInputType()"
+          onkeydown="if(event.key==='Enter')doStoreSearch()">
+        <span class="store-search-icon">🔍</span>
       </div>
-      <span class="store-change" onclick="clearStore()">Change</span>
-    </div>
-    <div id="store-search-ui">
-      <div class="row">
-        <label>Enter your Store ID</label>
-        <input type="text" id="store-id-input" placeholder="e.g. 1546" inputmode="numeric" oninput="onStoreInput()"
-          style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;width:100%;outline:none">
-        <div class="store-help" style="margin-top:10px">
-          <strong>How to find your store ID:</strong><br>
-          Visit <a href="https://www.publix.com/locations" target="_blank" style="color:var(--amber)">publix.com/locations</a>,
-          click your store, and find the 4-digit number in the URL: <code>/store-details/<strong>XXXX</strong>/</code>
-        </div>
+      <div style="margin-top:8px;text-align:right">
+        <button class="btn-load" style="padding:7px 16px;font-size:12px" onclick="doStoreSearch()">Search</button>
       </div>
+      <div id="store-results" class="store-results"></div>
     </div>
   </div>
-  <div class="save-bar">
-    <button class="btn-save" onclick="savePrefs('store')">Save Changes</button>
-    <span class="save-st" id="ss-store"></span>
-  </div>
+
 </div>
 
 <!-- ══ DEALS ══════════════════════════════════════════════════════════════ -->
@@ -383,28 +557,22 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
     <div class="deals-layout">
       <div class="filter-col" id="deals-filter-col">
         <div class="filter-sec">
-          <div class="filter-hd">Flyer</div>
-          <label class="filter-opt"><input type="checkbox" id="f-weekly" checked onchange="renderDeals()">
-            <div><div class="filter-opt-label">Weekly Ad</div><div class="filter-opt-sub" id="fsub-weekly"></div></div>
+          <div class="filter-hd">Savings</div>
+          <label class="filter-opt"><input type="checkbox" id="f-all" onchange="onSavingsFilter('all')">
+            <div><div class="filter-opt-label">All deals</div></div>
+            <span class="filter-opt-cnt" id="fcnt-all"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="f-weekly" checked onchange="onSavingsFilter('weekly')">
+            <div><div class="filter-opt-label">Weekly ad</div></div>
             <span class="filter-opt-cnt" id="fcnt-weekly"></span></label>
-          <label class="filter-opt"><input type="checkbox" id="f-extra" onchange="renderDeals()">
-            <div><div class="filter-opt-label">Extra Savings</div><div class="filter-opt-sub" id="fsub-extra"></div></div>
-            <span class="filter-opt-cnt" id="fcnt-extra"></span></label>
-        </div>
-        <div class="filter-sec">
-          <div class="filter-hd">Deal Type</div>
-          <label class="filter-opt"><input type="checkbox" id="f-stacked" onchange="renderDeals()">
-            <div><div class="filter-opt-label">Stacked Deals</div></div>
-            <span class="filter-opt-cnt" id="fcnt-stacked"></span></label>
-          <label class="filter-opt"><input type="checkbox" id="f-coupon" onchange="renderDeals()">
-            <div><div class="filter-opt-label">Printable Coupons</div></div>
+          <label class="filter-opt"><input type="checkbox" id="f-bogo" onchange="onSavingsFilter('bogo')">
+            <div><div class="filter-opt-label">BOGOs</div></div>
+            <span class="filter-opt-cnt" id="fcnt-bogo"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="f-coupon" onchange="onSavingsFilter('coupon')">
+            <div><div class="filter-opt-label">Digital coupons</div></div>
             <span class="filter-opt-cnt" id="fcnt-coupon"></span></label>
-        </div>
-        <div class="filter-sec">
-          <div class="filter-hd">Popular Filters</div>
-          <label class="filter-opt"><input type="checkbox" id="f-publix" onchange="renderDeals()">
-            <div><div class="filter-opt-label">Publix Brand</div></div>
-            <span class="filter-opt-cnt" id="fcnt-publix"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="f-extra" onchange="onSavingsFilter('extra')">
+            <div><div class="filter-opt-label">Extra savings</div></div>
+            <span class="filter-opt-cnt" id="fcnt-extra"></span></label>
         </div>
         <div class="filter-sec"><div class="filter-hd">Department</div><div id="dept-deals"></div></div>
       </div>
@@ -446,22 +614,22 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
     <div class="deals-layout">
       <div class="filter-col" id="matches-filter-col">
         <div class="filter-sec">
-          <div class="filter-hd">Flyer</div>
-          <label class="filter-opt"><input type="checkbox" id="mf-weekly" checked onchange="renderMatches()">
-            <div><div class="filter-opt-label">Weekly Ad</div></div>
+          <div class="filter-hd">Savings</div>
+          <label class="filter-opt"><input type="checkbox" id="mf-all" checked onchange="onMatchFilter('all')">
+            <div><div class="filter-opt-label">All deals</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-all"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="mf-weekly" onchange="onMatchFilter('weekly')">
+            <div><div class="filter-opt-label">Weekly ad</div></div>
             <span class="filter-opt-cnt" id="mfcnt-weekly"></span></label>
-          <label class="filter-opt"><input type="checkbox" id="mf-extra" onchange="renderMatches()">
-            <div><div class="filter-opt-label">Extra Savings</div></div>
-            <span class="filter-opt-cnt" id="mfcnt-extra"></span></label>
-        </div>
-        <div class="filter-sec">
-          <div class="filter-hd">Deal Type</div>
-          <label class="filter-opt"><input type="checkbox" id="mf-coupon" onchange="renderMatches()">
-            <div><div class="filter-opt-label">Coupons</div></div>
+          <label class="filter-opt"><input type="checkbox" id="mf-bogo" onchange="onMatchFilter('bogo')">
+            <div><div class="filter-opt-label">BOGOs</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-bogo"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="mf-coupon" onchange="onMatchFilter('coupon')">
+            <div><div class="filter-opt-label">Digital coupons</div></div>
             <span class="filter-opt-cnt" id="mfcnt-coupon"></span></label>
-          <label class="filter-opt"><input type="checkbox" id="mf-publix" onchange="renderMatches()">
-            <div><div class="filter-opt-label">Publix Brand</div></div>
-            <span class="filter-opt-cnt" id="mfcnt-publix"></span></label>
+          <label class="filter-opt"><input type="checkbox" id="mf-extra" onchange="onMatchFilter('extra')">
+            <div><div class="filter-opt-label">Extra savings</div></div>
+            <span class="filter-opt-cnt" id="mfcnt-extra"></span></label>
         </div>
         <div class="filter-sec"><div class="filter-hd">Department</div><div id="dept-matches"></div></div>
       </div>
@@ -484,7 +652,11 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
   <div class="card">
     <div class="card-title">Add Items</div>
     <div class="items-add">
-      <input type="text" id="new-item" placeholder="e.g. chicken breast, greek yogurt…" onkeydown="if(event.key==='Enter')addItem()">
+      <div class="ac-wrap">
+        <input type="text" id="new-item" placeholder="e.g. chicken breast, greek yogurt…"
+          oninput="acInput()" onkeydown="acKeydown(event)" onblur="setTimeout(acHide,150)" autocomplete="off">
+        <div id="ac-drop" class="ac-drop" style="display:none"></div>
+      </div>
       <button class="btn-add" onclick="addItem()">+ Add</button>
     </div>
     <ul class="items-ul" id="items-ul"></ul>
@@ -496,20 +668,41 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       <textarea id="bulk-ta" placeholder="chicken breast&#10;greek yogurt&#10;tide pods&#10;orange juice"></textarea></div>
     <button class="btn-sec" onclick="bulkImport()">Import Items</button>
   </div>
-  <div class="save-bar">
-    <button class="btn-save" onclick="savePrefs('list')">Save Changes</button>
-    <span class="save-st" id="ss-list"></span>
-  </div>
+
 </div>
 
 <!-- ══ SCHEDULE ═══════════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-schedule">
-  <div class="panel-title">Alert Schedule</div>
-  <div class="panel-sub">Publix updates their weekly ad on Wednesdays. The scraper runs automatically via EventBridge.</div>
+  <div class="panel-title">Notifications</div>
+  <div class="panel-sub">Control how and when you receive deal alerts.</div>
   <div class="card">
-    <div class="card-title">When to Check</div>
+    <div class="card-title">Email Alerts</div>
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Weekly email digest</div>
+        <div class="toggle-hint">Receive a weekly email when your list items go on sale</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="email-enabled" onchange="document.getElementById('email-settings-wrap').style.display=this.checked?'':\'none\';savePrefs('account')">
+        <div class="toggle-track"></div>
+      </label>
+    </div>
+    <div id="email-settings-wrap">
+      <div class="row">
+        <label>Send deal alerts to</label>
+        <input type="email" id="notify-email" placeholder="you@example.com" onblur="savePrefs('account')" onkeydown="if(event.key==='Enter')savePrefs('account')">
+        <div class="hint">Defaults to your account email. Change to send alerts to a different address.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+        <button class="btn-test" id="btn-test-email" onclick="sendTestEmail()">📧 Send Test Email</button>
+        <span id="test-email-msg" style="font-size:13px"></span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Alert Schedule</div>
     <div class="row"><label>Day of week</label>
-      <select id="sched-day">
+      <select id="sched-day" onchange="savePrefs('schedule')">
         <option value="1">Monday</option><option value="2">Tuesday</option>
         <option value="3" selected>Wednesday (recommended)</option>
         <option value="4">Thursday</option><option value="5">Friday</option>
@@ -517,25 +710,22 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       </select></div>
     <div class="row" style="display:flex;gap:12px">
       <div style="flex:1"><label>Hour</label>
-        <select id="sched-hour">
+        <select id="sched-hour" onchange="savePrefs('schedule')">
           <option value="6">6</option><option value="7">7</option><option value="8" selected>8</option>
           <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
         </select></div>
       <div style="width:80px"><label>AM/PM</label>
-        <select id="sched-ampm"><option value="AM" selected>AM</option><option value="PM">PM</option></select></div>
+        <select id="sched-ampm" onchange="savePrefs('schedule')"><option value="AM" selected>AM</option><option value="PM">PM</option></select></div>
     </div>
     <div class="hint">The scraper runs via AWS EventBridge cron every Wednesday at 12:00 UTC (8 AM ET).</div>
   </div>
-  <div class="save-bar">
-    <button class="btn-save" onclick="savePrefs('schedule')">Save Changes</button>
-    <span class="save-st" id="ss-schedule"></span>
-  </div>
+
 </div>
 
 <!-- ══ ACCOUNT ════════════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-account">
   <div class="panel-title">Account</div>
-  <div class="panel-sub">Manage your settings and notification preferences.</div>
+  <div class="panel-sub">Manage your account settings and PIN.</div>
   <div class="card">
     <div class="acct-info">
       <div class="acct-avatar" id="acct-avatar">?</div>
@@ -544,40 +734,25 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
     </div>
   </div>
   <div class="card">
-    <div class="card-title">Notification Email</div>
-    <div class="row">
-      <label>Send deal alerts to</label>
-      <input type="email" id="notify-email" placeholder="you@example.com">
-      <div class="hint">Defaults to your account email. Change to send alerts to a different address.</div>
-    </div>
-    <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
-      <button class="btn-test" id="btn-test-email" onclick="sendTestEmail()">📧 Send Test Email</button>
-      <span id="test-email-msg" style="font-size:13px"></span>
-    </div>
-  </div>
-  <div class="card">
     <div class="card-title">Change PIN</div>
     <div class="row"><label>Current PIN</label>
       <div class="pin-wrap" style="max-width:220px">
-        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d cur-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d cur-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
       </div></div>
     <div class="row"><label>New PIN</label>
       <div class="pin-wrap" style="max-width:220px">
-        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-        <input class="pin-d new-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+        <input class="pin-d new-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
       </div></div>
     <button class="btn-sec" onclick="changePin()">Update PIN</button>
     <div class="msg" id="pin-msg" style="margin-top:12px"></div>
   </div>
-  <div class="save-bar" style="margin-bottom:24px">
-    <button class="btn-save" onclick="savePrefs('account')">Save Changes</button>
-    <span class="save-st" id="ss-account"></span>
-  </div>
+
   <div class="danger-zone">
     <h3>Delete Account</h3>
     <p>Permanently removes your account and all preferences. Cannot be undone.</p>
@@ -588,7 +763,9 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 <!-- ══ ADMIN ══════════════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-admin">
   <div class="panel-title">Admin</div>
-  <div class="panel-sub">Manage users, view scrape history, run jobs on demand.</div>
+  <div class="panel-sub">Manage users, view logs, and analytics.</div>
+
+  <!-- LOGIN -->
   <div id="admin-login-sec" style="max-width:380px;margin:0 auto">
     <div class="card">
       <div class="card-title">Admin Authentication</div>
@@ -598,47 +775,205 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       <div class="msg" id="admin-login-msg" style="margin-top:10px"></div>
     </div>
   </div>
+
+  <!-- DASHBOARD -->
   <div id="admin-dash" style="display:none">
-    <div class="scrape-bar loading" id="admin-scrape-bar"><span>Loading scrape status…</span></div>
-    <div class="adm-sec">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="adm-sec-title" style="margin-bottom:0">Recent Scrape Jobs</div>
-        <div style="display:flex;gap:8px">
-          <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="adminRunScrape(this)">▶ Run Now</button>
-          <button class="abn g" onclick="adminLoadLogs()">↻ Refresh</button>
+    <!-- Top bar: scrape status + sign out -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:12px">
+      <div class="scrape-bar loading" id="admin-scrape-bar" style="flex:1;margin-bottom:0"><span>Loading scrape status…</span></div>
+      <button class="btn-sec" onclick="adminSignOut()" style="font-size:12px;padding:5px 12px;white-space:nowrap">🔒 Sign out</button>
+    </div>
+
+    <!-- Sidebar + Content layout -->
+    <div class="adm-layout">
+      <nav class="adm-sidebar">
+        <button class="adm-sidebar-item active" onclick="adminNav('users')"   id="anav-users">  <span class="adm-si-icon">👥</span> Users</button>
+        <button class="adm-sidebar-item"        onclick="adminNav('reports')" id="anav-reports"><span class="adm-si-icon">📊</span> Reports</button>
+        <button class="adm-sidebar-item"        onclick="adminNav('logging')" id="anav-logging"><span class="adm-si-icon">📋</span> Logging</button>
+      </nav>
+
+      <div class="adm-content">
+
+        <!-- ══════════════════════ USERS ══════════════════════ -->
+        <div class="adm-subpage active" id="apage-users">
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">User Accounts <span id="admin-user-ct" style="font-size:13px;color:var(--ink-soft);font-weight:400"></span></div>
+              <div style="display:flex;gap:8px">
+                <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="showCreateUser()">+ Add User</button>
+                <button class="abn g" onclick="adminLoadUsers()">↻ Refresh</button>
+              </div>
+            </div>
+            <input type="text" id="admin-user-search" placeholder="Search by email or store…"
+              style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--border);border-radius:var(--rad);font-size:13px;margin-bottom:10px;outline:none"
+              oninput="adminFilterUsers()">
+            <div style="overflow-x:auto">
+              <table class="admin-tbl">
+                <thead><tr><th>Email</th><th>Notify To</th><th>Store</th><th>Items</th><th>Joined</th><th>Actions</th></tr></thead>
+                <tbody id="admin-tbody"><tr><td colspan="6" style="color:var(--ink-soft);font-size:13px;padding:16px">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div id="admin-user-pages" style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:13px;color:var(--ink-soft)"></div>
+          </div>
+
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">🔐 Authentication Log</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <select id="auth-log-filter" onchange="adminRenderAuthLogs()" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--white)">
+                  <option value="all">All events</option>
+                  <option value="success">Success only</option>
+                  <option value="fail">Failures only</option>
+                </select>
+                <button class="abn g" onclick="adminLoadAuthLogs()">↻ Refresh</button>
+              </div>
+            </div>
+            <div id="auth-log-wrap" style="overflow-x:auto">
+              <div style="color:var(--ink-soft);font-size:13px">Click Refresh to load auth events.</div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div id="admin-logs-el"><div style="color:var(--ink-soft);font-size:13px;padding:12px 0">Loading…</div></div>
-    </div>
-    <div class="adm-sec">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="adm-sec-title" style="margin-bottom:0">CloudWatch Log Tail</div>
-        <button class="abn g" onclick="adminLoadTail()">↻ Fetch Latest</button>
-      </div>
-      <div id="admin-tail-loading" style="color:var(--ink-soft);font-size:13px">Click "Fetch Latest" to load logs.</div>
-      <div id="admin-tail" class="terminal" style="display:none"></div>
-    </div>
-    <div class="adm-sec">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="adm-sec-title" style="margin-bottom:0">User Accounts <span id="admin-user-ct" style="font-size:13px;color:var(--ink-soft);font-weight:400"></span></div>
-        <div style="display:flex;gap:8px">
-          <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="showCreateUser()">+ Add User</button>
-          <button class="abn g" onclick="adminLoadUsers()">↻ Refresh</button>
+
+        <!-- ══════════════════════ REPORTS ══════════════════════ -->
+        <div class="adm-subpage" id="apage-reports">
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">📊 Analytics &amp; Reports</div>
+              <button class="abn g" onclick="adminLoadStats()">↻ Refresh</button>
+            </div>
+            <div id="admin-stats-body"><div style="color:var(--ink-soft);font-size:13px">Loading…</div></div>
+          </div>
         </div>
-      </div>
-      <div style="overflow-x:auto">
-        <table class="admin-tbl">
-          <thead><tr><th>Email</th><th>Notify To</th><th>Store</th><th>Items</th><th>Joined</th><th>Actions</th></tr></thead>
-          <tbody id="admin-tbody"><tr><td colspan="6" style="color:var(--ink-soft);font-size:13px;padding:16px">Loading…</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+
+        <!-- ══════════════════════ LOGGING ══════════════════════ -->
+        <div class="adm-subpage" id="apage-logging">
+
+          <!-- Scrape jobs -->
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">🔄 Scrape Jobs</div>
+              <div style="display:flex;gap:8px">
+                <button class="btn-load" style="padding:7px 14px;font-size:12px" onclick="adminRunScrape(this)">▶ Run Now</button>
+                <button class="abn g" onclick="adminLoadLogs()">↻ Refresh</button>
+              </div>
+            </div>
+            <div id="admin-logs-el"><div style="color:var(--ink-soft);font-size:13px;padding:12px 0">Loading…</div></div>
+          </div>
+
+          <!-- CloudWatch -->
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">☁️ CloudWatch Tail</div>
+              <button class="abn g" onclick="adminLoadTail()">↻ Fetch Latest</button>
+            </div>
+            <div id="admin-tail-loading" style="color:var(--ink-soft);font-size:13px">Click “Fetch Latest” to load logs.</div>
+            <div id="admin-tail" class="terminal" style="display:none"></div>
+          </div>
+
+          <!-- App / Frontend / API error logs -->
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">🌐 Application Logs</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <select id="app-log-filter" onchange="adminRenderAppLogs()" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--white)">
+                  <option value="all">All sources</option>
+                  <option value="frontend">Frontend JS</option>
+                  <option value="api">API errors</option>
+                  <option value="email">Email delivery</option>
+                  <option value="cache">Cache</option>
+                </select>
+                <button class="abn g" onclick="adminLoadAppLogs()">↻ Refresh</button>
+              </div>
+            </div>
+            <div id="app-log-wrap" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:400px;overflow-y:auto">
+              <div style="color:var(--ink-soft);font-size:13px;padding:12px">Click Refresh to load application logs.</div>
+            </div>
+          </div>
+
+          <!-- Deal cache stats -->
+          <div class="adm-sec">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="adm-sec-title" style="margin-bottom:0">🎯 Deal Cache Stats</div>
+              <button class="abn g" onclick="adminLoadCacheStats()">↻ Refresh</button>
+            </div>
+            <div id="cache-stats-wrap"><div style="color:var(--ink-soft);font-size:13px">Click Refresh to load cache metrics.</div></div>
+          </div>
+
+        </div><!-- /apage-logging -->
+
+      </div><!-- /adm-content -->
+    </div><!-- /adm-layout -->
+
+  </div><!-- /admin-dash -->
 </div>
 
     </div><!-- /main-content -->
   </div><!-- /app-layout -->
 </div><!-- /app-screen -->
+
+<!-- WELCOME ONBOARDING MODAL -->
+<div class="wlc-overlay" id="wlc-overlay">
+  <div class="wlc-modal">
+    <div class="wlc-header">
+      <h2>Welcome to Publix Deal Checker 🛒</h2>
+      <p>Your personal grocery savings assistant</p>
+    </div>
+    <div class="wlc-body">
+      <div class="wlc-steps-row">
+        <div class="wlc-dot active" id="wlc-dot-0"></div>
+        <div class="wlc-dot"       id="wlc-dot-1"></div>
+        <div class="wlc-dot"       id="wlc-dot-2"></div>
+      </div>
+      <!-- Step 1: What is this -->
+      <div class="wlc-step active" id="wlc-step-0">
+        <div class="wlc-step-title">Save money every week</div>
+        <div class="wlc-step-sub">Publix Deal Checker watches this week’s sales and alerts you when items from your shopping list go on sale — including BOGOs.</div>
+        <div class="wlc-feature">
+          <div class="wlc-icon">🏷️</div>
+          <div><h4>Browse all deals</h4><p>See every sale at your Publix, filtered by category, savings type, or BOGO.</p></div>
+        </div>
+        <div class="wlc-feature">
+          <div class="wlc-icon">🎯</div>
+          <div><h4>Personalized matches</h4><p>Add items to your list and we’ll surface deals that match — even with fuzzy name matching.</p></div>
+        </div>
+        <div class="wlc-feature">
+          <div class="wlc-icon">📧</div>
+          <div><h4>Weekly email alerts</h4><p>Get notified every Wednesday when your items go on sale. You control the email address.</p></div>
+        </div>
+      </div>
+      <!-- Step 2: How to use -->
+      <div class="wlc-step" id="wlc-step-1">
+        <div class="wlc-step-title">Getting set up takes 2 minutes</div>
+        <div class="wlc-step-sub">Three things to do to get the most out of Deal Checker:</div>
+        <div class="wlc-instruction">
+          <div class="wlc-num">1</div>
+          <p><strong>Set your store</strong> — search by city, ZIP, or store number. Your store determines which weekly deals you see.</p>
+        </div>
+        <div class="wlc-instruction">
+          <div class="wlc-num">2</div>
+          <p><strong>Build your list</strong> — go to <strong>My List</strong> and add the items you regularly buy. Partial names work great (e.g. “chicken”, “yogurt”).</p>
+        </div>
+        <div class="wlc-instruction">
+          <div class="wlc-num">3</div>
+          <p><strong>Turn on email alerts</strong> — visit <strong>Account</strong> to set your notification email and enable weekly alerts. New deals drop every Wednesday.</p>
+        </div>
+      </div>
+      <!-- Step 3: Ready -->
+      <div class="wlc-step" id="wlc-step-2">
+        <div class="wlc-step-title">You’re all set!</div>
+        <div class="wlc-step-sub">First up: find your Publix store. Once it’s set, your personalized deals will load automatically.</div>
+        <div class="wlc-feature" style="background:var(--green-bg);border-radius:12px;padding:16px;margin-bottom:0">
+          <div class="wlc-icon">🏪</div>
+          <div><h4>Find your store</h4><p>Click “Let’s go” and we’ll take you straight to the Store Finder to get started.</p></div>
+        </div>
+      </div>
+    </div>
+    <div class="wlc-footer">
+      <button class="wlc-skip" onclick="wlcDismiss()">Skip intro</button>
+      <button class="wlc-next" id="wlc-next-btn" onclick="wlcNext()">Next →</button>
+    </div>
+  </div>
+</div>
 
 <!-- DIALOGS -->
 <div class="overlay" id="del-overlay">
@@ -654,10 +989,10 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
   <div class="dialog"><h3>Reset PIN</h3>
     <p>Set new PIN for <strong id="apoe"></strong></p>
     <div class="row"><label>New PIN</label><div class="pin-wrap">
-      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ap-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ap-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
     </div></div>
     <div class="msg" id="ap-msg" style="margin-top:8px"></div>
     <div class="dlg-btns" style="margin-top:16px">
@@ -691,10 +1026,10 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
   <div class="dialog"><h3>Create New User</h3>
     <div class="row"><label>Email</label><input type="email" id="ac-email" placeholder="user@example.com"></div>
     <div class="row"><label>4-digit PIN</label><div class="pin-wrap">
-      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
-      <input class="pin-d ac-pin" type="text" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
+      <input class="pin-d ac-pin" type="password" inputmode="numeric" maxlength="1" placeholder="·">
     </div></div>
     <div class="msg" id="ac-msg" style="margin-top:8px"></div>
     <div class="dlg-btns" style="margin-top:16px">
@@ -723,6 +1058,7 @@ let _dealsUpdated  = '';       // WeeklyAdLatestUpdatedDateTime from last fetch
 let _dealsStoreId  = '';       // which store these deals are for
 let _allMatches    = [];       // computed matches
 let _matchDeptCts  = {};
+let _savingTypes   = [];       // dynamic saving_type values from API
 
 // ═══════════════════════════════════════════════════════════════════
 // PIN INPUTS
@@ -783,7 +1119,9 @@ async function doAuth() {
     if(authMode==='register'){setMsg('auth-msg','Account created! Signing you in…','ok');await new Promise(r=>setTimeout(r,700));authMode='login';await doAuth();return;}
     token=data.token;userEmail=data.email;
     localStorage.setItem('pdc_token',token);localStorage.setItem('pdc_email',userEmail);
-    prefs=data.prefs; enterApp();
+    prefs=data.prefs;
+    const _isNew = authMode==='register' || !(prefs && prefs.store_id);
+    enterApp({isFirstLogin: _isNew});
   }catch(e){setMsg('auth-msg','Could not reach the server.','err');}
   finally{btn.disabled=false;btn.textContent=authMode==='login'?'Sign In':'Create Account';}
 }
@@ -791,15 +1129,24 @@ async function doAuth() {
 // ═══════════════════════════════════════════════════════════════════
 // APP ENTRY
 // ═══════════════════════════════════════════════════════════════════
-function enterApp() {
+function enterApp(opts) {
+  // opts.isFirstLogin = true means brand-new account (no store set yet)
+  const isFirstLogin = (opts && opts.isFirstLogin) ||
+    (!localStorage.getItem('pdc_welcomed_'+userEmail) && !(prefs && prefs.store_id));
   document.getElementById('auth-screen').style.display='none';
   document.getElementById('app-screen').classList.add('visible');
   document.getElementById('topbar-email').textContent=userEmail;
   document.getElementById('acct-email-disp').textContent=userEmail;
   document.getElementById('acct-avatar').textContent=(userEmail[0]||'?').toUpperCase();
   loadPrefs();
-  showPanel('deals');
-  // Preload deals on login
+  if(isFirstLogin){
+    // Show welcome wizard; on dismiss it will navigate to Store
+    showPanel('store');
+    setTimeout(()=>wlcShow(), 120);
+  } else {
+    // Returning user: go straight to My Matches
+    showPanel('matches');
+  }
   preloadDeals();
 }
 async function doLogout(){
@@ -814,8 +1161,23 @@ function showPanel(name) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
-  document.getElementById('nav-'+name).classList.add('active');
+  const sideNav=document.getElementById('nav-'+name);
+  if(sideNav) sideNav.classList.add('active');
+  const mobileNav=document.getElementById('mnav-'+name);
+  if(mobileNav) mobileNav.classList.add('active');
   if(name==='admin') initAdmin();
+  // Always force a fresh load when opening Matches so it reflects the latest scrape.
+  // Deals panel uses the cached version (fast, once per session).
+  if(name==='matches') loadDeals(false);
+  else if(name==='deals') preloadDeals();
+}
+function openMobileNav(){
+  document.getElementById('mobile-nav').classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeMobileNav(){
+  document.getElementById('mobile-nav').classList.remove('open');
+  document.body.style.overflow='';
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -824,7 +1186,18 @@ function showPanel(name) {
 function loadPrefs() {
   if(!prefs) return;
   const sid=prefs.store_id||'';
-  if(sid) setStoreSel({id:sid, name:prefs.store_name||'', address:prefs.store_address||''});
+  if(sid){
+    // Set basic info immediately, then enrich with full store details in background
+    setStoreSel({id:sid, name:prefs.store_name||'', address:prefs.store_address||'', street:prefs.store_address||''});
+    fetch(API+'/stores/search?q='+encodeURIComponent(sid),{headers:{'Authorization':'Bearer '+token}})
+      .then(r=>r.json()).then(data=>{
+        const s=(data.stores||[])[0];
+        if(s && s.id===sid) setStoreSel(s);
+      }).catch(()=>{});
+  }
+  const emailEnabled = prefs.email_enabled !== false; // default true
+  document.getElementById('email-enabled').checked = emailEnabled;
+  document.getElementById('email-settings-wrap').style.display = emailEnabled ? '' : 'none';
   document.getElementById('notify-email').value = prefs.notify_email || userEmail || '';
   renderItems();
   const t=((prefs.matching||{}).threshold)||75;
@@ -841,6 +1214,7 @@ function collectPrefs(){
     store_name:    prefs?.store_name||'',
     store_address: prefs?.store_address||'',
     notify_email:  document.getElementById('notify-email').value.trim()||userEmail,
+    email_enabled: document.getElementById('email-enabled').checked,
     items:         prefs?.items||[],
     matching:      {threshold:parseInt(document.getElementById('threshold').value)},
     schedule:      {days:[parseInt(document.getElementById('sched-day').value)],
@@ -848,9 +1222,15 @@ function collectPrefs(){
                     minute:0, ampm:document.getElementById('sched-ampm').value},
   };
 }
+let _saveToastTimer=null;
+function showSaveToast(){
+  const t=document.getElementById('save-toast');
+  if(!t) return;
+  t.classList.add('show');
+  clearTimeout(_saveToastTimer);
+  _saveToastTimer=setTimeout(()=>t.classList.remove('show'),2000);
+}
 async function savePrefs(ctx){
-  const stEl=document.getElementById('ss-'+ctx);
-  if(stEl){stEl.textContent='Saving…';stEl.className='save-st';}
   const p=collectPrefs();
   if(prefs) p.items=prefs.items||[];
   try{
@@ -858,43 +1238,163 @@ async function savePrefs(ctx){
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Save failed');
     prefs=data.prefs;
-    if(stEl){stEl.textContent='✓ Saved';stEl.className='save-st ok';setTimeout(()=>{stEl.textContent='';stEl.className='save-st';},2500);}
-  }catch(e){if(stEl){stEl.textContent='✗ '+e.message;stEl.className='save-st err';}}
+    showSaveToast();
+  }catch(e){console.error('Save failed:',e.message);}
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // STORE
 // ═══════════════════════════════════════════════════════════════════
+// ── Store panel ────────────────────────────────────────────────────
+let _storeData = null; // full store object from API
+
+function fmtPhone(p){
+  if(!p) return '';
+  const d=p.replace(/\D/g,'');
+  if(d.length===10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return p;
+}
+
+function storeCardHtml(s){
+  const addr = [s.street, s.city, s.state, s.zip].filter(Boolean).join(', ');
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
+  const hero = s.img_hero
+    ? `<img class="store-card-hero" src="${escH(s.img_hero)}" alt="${escH(s.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+    + `<div class="store-card-hero-ph" style="display:none">🏪</div>`
+    : `<div class="store-card-hero-ph">🏪</div>`;
+
+  // Hours grid
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const todayIdx = new Date().getDay();
+  let hoursGrid = '';
+  if(s.hours_raw && s.hours_raw.length){
+    // hours_raw[0] = today, build forward
+    hoursGrid = `<div class="store-hours-grid">`;
+    for(let i=0;i<Math.min(7,s.hours_raw.length);i++){
+      const h = s.hours_raw[i];
+      const dt = new Date(h.openTime||h.closeTime||'');
+      const dayIdx = dt.getDay ? dt.getDay() : (todayIdx+i)%7;
+      const isToday = i===0;
+      let timeStr = '';
+      if(h.isClosed) timeStr='Closed';
+      else if(h.isOpen24Hours) timeStr='24h';
+      else{
+        const fmt=iso=>{try{const t=new Date(iso);return t.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}).replace(':00','').replace(' ','');}catch{return'';}};
+        timeStr=`${fmt(h.openTime)}<br>${fmt(h.closeTime)}`;
+      }
+      hoursGrid+=`<div class="store-hour-day${isToday?' today':''}">
+        <div class="store-hour-day-name">${days[dayIdx]}</div>
+        <div class="store-hour-time">${timeStr}</div>
+      </div>`;
+    }
+    hoursGrid+='</div>';
+  }
+
+  const phone = fmtPhone(s.phone);
+  const pharmPhone = fmtPhone(s.pharmacy_phone);
+
+  return `<div>
+    ${hero}
+    <div class="store-card-body">
+      <div class="store-card-name">${escH(s.name)}</div>
+      <div class="store-card-id">Store #${escH(s.id)}</div>
+      ${addr?`<div class="store-card-row"><span class="store-card-row-icon">📍</span>
+        <span><a href="${escH(mapsUrl)}" target="_blank">${escH(addr)}</a></span></div>`:''}
+      ${phone?`<div class="store-card-row"><span class="store-card-row-icon">📞</span>
+        <span><a href="tel:+1${escH(s.phone)}">${escH(phone)}</a></span></div>`:''}
+      ${pharmPhone?`<div class="store-card-row"><span class="store-card-row-icon">💊</span>
+        <span>Pharmacy: <a href="tel:+1${escH(s.pharmacy_phone)}">${escH(pharmPhone)}</a></span></div>`:''}
+      ${s.hours_today?`<div class="store-card-row"><span class="store-card-row-icon">🕐</span>
+        <span>Today: <strong>${escH(s.hours_today)}</strong></span></div>`:''}
+      ${hoursGrid?`<div style="margin-top:10px">${hoursGrid}</div>`:''}
+    </div>
+    <div class="store-card-footer">
+      <span style="font-size:12px;color:var(--ink-soft)">
+        <a href="https://www.publix.com/locations/${escH(s.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''))}" target="_blank" style="color:var(--green)">View on Publix.com ↗</a>
+      </span>
+      <button class="btn-change" onclick="clearStore()">Change Store</button>
+    </div>
+  </div>`;
+}
+
 function setStoreSel(s){
-  document.getElementById('store-id-input').value=s.id||'';
   if(!prefs) prefs={};
-  prefs.store_id=s.id||'';prefs.store_name=s.name||'';prefs.store_address=s.address||'';
+  prefs.store_id      = s.id||'';
+  prefs.store_name    = s.name||'';
+  prefs.store_address = s.address||s.street||'';
+  _storeData = s;
   if(s.id){
-    document.getElementById('ss-name').textContent   = s.name||('Store #'+s.id);
-    document.getElementById('ss-addr').textContent   = s.address||'';
-    document.getElementById('ss-id-disp').textContent= 'Store ID: '+s.id;
-    document.getElementById('store-sel').classList.add('vis');
-    document.getElementById('store-search-ui').style.display='none';
+    document.getElementById('store-card-el').innerHTML = storeCardHtml(s);
+    document.getElementById('store-card-wrap').style.display = '';
+    document.getElementById('store-search-ui').style.display = 'none';
   }
 }
+
 function clearStore(){
-  document.getElementById('store-id-input').value='';
-  document.getElementById('store-sel').classList.remove('vis');
-  document.getElementById('store-search-ui').style.display='';
+  document.getElementById('store-card-wrap').style.display = 'none';
+  document.getElementById('store-search-ui').style.display = '';
+  document.getElementById('store-id-input').value = '';
+  document.getElementById('store-results').innerHTML = '';
   if(prefs){prefs.store_id='';prefs.store_name='';prefs.store_address='';}
+  _storeData = null;
   _dealsStoreId='';_allDeals=[];_allMatches=[];
   document.getElementById('deals-browser').style.display='none';
   document.getElementById('matches-browser').style.display='none';
 }
+
+function onStoreInputType(){
+  // typing — do nothing until Search is clicked or Enter pressed
+}
+
 function onStoreInput(){
-  const v=document.getElementById('store-id-input').value.trim();
-  if(!prefs) prefs={};
-  prefs.store_id=v;prefs.store_name='';prefs.store_address='';
-  if(/^\d{3,6}$/.test(v)){
-    setStoreSel({id:v,name:'',address:''});
-    // Auto preload if store changed
-    if(v!==_dealsStoreId) preloadDeals();
+  doStoreSearch();
+}
+
+let _storeSearchTimer = null;
+async function doStoreSearch(){
+  const q = (document.getElementById('store-id-input').value||'').trim();
+  if(!q) return;
+  const resultsEl = document.getElementById('store-results');
+  resultsEl.innerHTML = '<div class="store-no-results">Searching…</div>';
+  try{
+    const res = await fetch(API+'/stores/search?q='+encodeURIComponent(q),
+      {headers:{'Authorization':'Bearer '+token}});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error||'Search failed');
+    const stores = data.stores||[];
+    if(!stores.length){
+      resultsEl.innerHTML = '<div class="store-no-results">No stores found. Try a different city, ZIP, or store #.</div>';
+      return;
+    }
+    resultsEl.innerHTML = stores.map((s,i)=>{
+      const thumb = s.img_thumb
+        ? `<img class="store-result-thumb" src="${escH(s.img_thumb)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="store-result-thumb-ph" style="display:none">🏪</div>`
+        : `<div class="store-result-thumb-ph">🏪</div>`;
+      const dist = s.distance!=null ? `<div class="store-result-dist">${(+s.distance).toFixed(1)} mi away</div>` : '';
+      const addr = [s.street, s.city, s.state].filter(Boolean).join(', ');
+      return `<div class="store-result-item" onclick="selectStore(${i})">
+        ${thumb}
+        <div style="flex:1;min-width:0">
+          <div class="store-result-name">${escH(s.name)} <span style="font-weight:400;color:var(--ink-soft);font-size:11px">#${escH(s.id)}</span></div>
+          <div class="store-result-addr">${escH(addr)}</div>
+          ${dist}
+        </div>
+        <span style="color:var(--green);font-size:18px">›</span>
+      </div>`;
+    }).join('');
+    // cache stores for selectStore
+    window._storeSearchResults = stores;
+  }catch(e){
+    resultsEl.innerHTML = `<div class="store-no-results" style="color:var(--red)">Search failed: ${escH(e.message)}</div>`;
   }
+}
+
+function selectStore(idx){
+  const s = (window._storeSearchResults||[])[idx];
+  if(!s) return;
+  setStoreSel(s);
+  savePrefs('store').catch(()=>{});
+  if(s.id !== _dealsStoreId) preloadDeals();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -910,15 +1410,16 @@ function renderItems(){
 function addItem(){
   const inp=document.getElementById('new-item');const v=inp.value.trim();
   if(!v) return;if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
-  if(!prefs.items.includes(v)){prefs.items.push(v);renderItems();}
+  if(!prefs.items.includes(v)){prefs.items.push(v);renderItems();savePrefs('list').catch(()=>{});}
   inp.value='';inp.focus();
 }
-function removeItem(i){if(!prefs||!prefs.items) return;prefs.items.splice(i,1);renderItems();syncDealCheckboxes();}
+function removeItem(i){if(!prefs||!prefs.items) return;prefs.items.splice(i,1);renderItems();syncDealCheckboxes();savePrefs('list').catch(()=>{});}
 function bulkImport(){
   const lines=document.getElementById('bulk-ta').value.split('\n').map(l=>l.trim()).filter(Boolean);
   if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
   lines.forEach(l=>{if(!prefs.items.includes(l)) prefs.items.push(l);});
   renderItems();document.getElementById('bulk-ta').value='';syncDealCheckboxes();
+  savePrefs('list').catch(()=>{});
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -972,11 +1473,37 @@ function deptEmoji(d){
 }
 
 // Preload: called on login and on store change. Skips if same store & already loaded.
+// Helper: is a deal a BOGO — trust server-side flag first, fall back to title/categories
+function isBogo(d){
+  if(d.is_bogo===true) return true;
+  if(Array.isArray(d.categories) && d.categories.includes('bogo')) return true;
+  const combined=((d.title||'')+' '+(d.savings||'')).toLowerCase();
+  return /\bbogo\b|b1g1|b2g1|buy \d.{0,8}get \d|buy one.{0,10}get one/.test(combined);
+}
+// Helper: is a deal "extra savings"
+function isExtra(d){
+  return d.saving_type==='ExtraSavings' || d.saving_type==='Stacked' || d.is_extra===true;
+}
+// Helper: is a deal a digital coupon
+function isCoupon(d){
+  return d.saving_type==='DigitalCoupon' || d.has_coupon;
+}
+
 async function preloadDeals() {
   const sid=prefs?.store_id;
   if(!sid) return;
-  if(sid===_dealsStoreId && _allDeals.length>0) return; // already loaded for this store
-  await loadDeals(false);
+  // Only reload if we don't have deals yet for this store,
+  // or if the server's updated_at timestamp is newer than what we last loaded.
+  // We do a lightweight check: if _allDeals is empty or store changed, always load.
+  // Otherwise, reload only when navigating to deals/matches if the server timestamp changed.
+  if(_dealsStoreId !== sid || !_allDeals.length) {
+    await loadDeals(false);
+  } else {
+    // Already have deals for this store — check if server has newer data
+    const cachedTs = localStorage.getItem('pdc_deals_ts_'+sid) || '';
+    if(_dealsUpdated && cachedTs === _dealsUpdated) return; // still fresh
+    await loadDeals(false);
+  }
 }
 
 async function loadDeals(forceRefresh=false){
@@ -1003,19 +1530,21 @@ async function loadDeals(forceRefresh=false){
     _deptCounts   = data.dept_counts||{};
     _dealsUpdated = data.updated_at||'';
     _dealsStoreId = sid;
+    _savingTypes  = data.saving_types||[];
 
-    // Update filter counts
-    document.getElementById('fcnt-weekly').textContent  = _dealCounts.weekly  ||'';
-    document.getElementById('fcnt-extra').textContent   = _dealCounts.extra   ||'';
-    document.getElementById('fcnt-stacked').textContent = _dealCounts.stacked ||'';
-    document.getElementById('fcnt-coupon').textContent  = _dealCounts.coupon  ||'';
-    document.getElementById('fcnt-publix').textContent  = _dealCounts.publix  ||'';
+    // Cache the timestamp so preloadDeals can skip reloading when data hasn't changed
+    if(_dealsUpdated) localStorage.setItem('pdc_deals_ts_'+sid, _dealsUpdated);
 
-    // Validity sublabels
+    // Populate Savings filter counts using correct saving_type mappings
+    document.getElementById('fcnt-all').textContent    = _allDeals.length||'';
+    document.getElementById('fcnt-weekly').textContent = _allDeals.filter(d=>d.saving_type==='WeeklyAd'&&!isBogo(d)).length||'';
+    document.getElementById('fcnt-bogo').textContent   = _allDeals.filter(d=>isBogo(d)).length||'';
+    document.getElementById('fcnt-coupon').textContent = _allDeals.filter(d=>isCoupon(d)).length||'';
+    document.getElementById('fcnt-extra').textContent  = _allDeals.filter(d=>isExtra(d)).length||'';
+
+    // Validity sublabels on banner
     const wa=_allDeals.find(d=>d.saving_type==='WeeklyAd'&&(d.valid_from||d.valid_thru));
     const ex=_allDeals.find(d=>d.is_extra&&(d.valid_from||d.valid_thru));
-    if(wa){ document.getElementById('fsub-weekly').textContent=`Valid ${wa.valid_from} to ${wa.valid_thru}`; }
-    if(ex){ document.getElementById('fsub-extra').textContent =`Valid ${ex.valid_from} to ${ex.valid_thru}`; }
 
     // Validity banner
     if(wa){
@@ -1051,13 +1580,16 @@ function buildDeptFilters(containerId, deptCounts, renderFn){
   const el=document.getElementById(containerId);
   if(!el) return;
   const depts=Object.keys(deptCounts).sort();
-  el.innerHTML=depts.map(dept=>`
-    <label class="filter-opt">
+  el.innerHTML=depts.map(dept=>{
+    const label=decodeEntities(dept);
+    return `<label class="filter-opt">
       <input type="checkbox" class="dept-cb" data-container="${containerId}" data-dept="${escH(dept)}" onchange="${renderFn}()">
-      <div><div class="filter-opt-label">${escH(dept)}</div></div>
+      <div><div class="filter-opt-label">${escH(label)}</div></div>
       <span class="filter-opt-cnt">${deptCounts[dept]}</span>
-    </label>`).join('');
+    </label>`;
+  }).join('');
 }
+
 function getCheckedDepts(cid){
   return [...document.querySelectorAll(`#${cid} .dept-cb:checked`)].map(c=>c.dataset.dept);
 }
@@ -1066,41 +1598,55 @@ function clearDeptCB(cid, dept){
   if(el) el.checked=false;
 }
 
+// Savings filter: selecting one unchecks others; if none checked, default to Weekly ad
+function onSavingsFilter(changed){
+  const ids=['f-all','f-weekly','f-bogo','f-coupon','f-extra'];
+  const els=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+  if(changed==='all' && els['f-all'].checked){
+    // All deals — uncheck everything else
+    ['f-weekly','f-bogo','f-coupon','f-extra'].forEach(id=>els[id].checked=false);
+  } else if(changed!=='all'){
+    els['f-all'].checked=false;
+    // If nothing checked, revert to Weekly ad
+    const anyChecked=['f-weekly','f-bogo','f-coupon','f-extra'].some(id=>els[id].checked);
+    if(!anyChecked) els['f-weekly'].checked=true;
+  }
+  renderDeals();
+}
+
 function renderDeals(){
-  const q       =(document.getElementById('deals-q').value||'').toLowerCase();
-  const fW      =document.getElementById('f-weekly').checked;
-  const fE      =document.getElementById('f-extra').checked;
-  const fSt     =document.getElementById('f-stacked').checked;
-  const fCo     =document.getElementById('f-coupon').checked;
-  const fPu     =document.getElementById('f-publix').checked;
-  const depts   =getCheckedDepts('dept-deals');
-  const typeAny =fE||fSt||fCo||fPu;
+  const q    =(document.getElementById('deals-q').value||'').toLowerCase();
+  const fAll =document.getElementById('f-all').checked;
+  const fW   =document.getElementById('f-weekly').checked;
+  const fBogo=document.getElementById('f-bogo').checked;
+  const fCo  =document.getElementById('f-coupon').checked;
+  const fE   =document.getElementById('f-extra').checked;
+  const depts=getCheckedDepts('dept-deals');
 
   let deals=_allDeals.filter(d=>{
-    if(fSt && d.is_stacked) return true;
-    if(fCo && d.has_coupon) return true;
-    if(fPu && d.is_publix_brand) return true;
-    if(fE  && d.is_extra) return true;
-    if(!typeAny && fW) return d.saving_type==='WeeklyAd';
-    if(!typeAny && !fW) return true;
-    if(fW && d.saving_type==='WeeklyAd') return true;
+    if(fAll) return true;
+    if(fBogo && isBogo(d))   return true;
+    if(fCo   && isCoupon(d)) return true;
+    if(fE    && isExtra(d))  return true;
+    if(fW    && d.saving_type==='WeeklyAd' && !isBogo(d)) return true;
     return false;
   });
   if(depts.length) deals=deals.filter(d=>depts.includes(d.department||''));
-  if(q) deals=deals.filter(d=>(d.title||'').toLowerCase().includes(q)||(d.description||'').toLowerCase().includes(q)||(d.brand||'').toLowerCase().includes(q)||(d.department||'').toLowerCase().includes(q));
+  if(q) deals=deals.filter(d=>
+    (d.title||'').toLowerCase().includes(q)||
+    (d.description||'').toLowerCase().includes(q)||
+    (d.brand||'').toLowerCase().includes(q)||
+    (d.department||'').toLowerCase().includes(q)
+  );
 
   document.getElementById('deals-meta').textContent=deals.length+' of '+_allDeals.length+' deals';
 
-  // Active chips
+  // Active chips — dept filters only (savings are visible checkboxes)
   const chips=[];
-  if(fE)  chips.push(['Extra Savings','f-extra',null]);
-  if(fSt) chips.push(['Stacked Deals','f-stacked',null]);
-  if(fCo) chips.push(['Coupons','f-coupon',null]);
-  if(fPu) chips.push(['Publix Brand','f-publix',null]);
-  depts.forEach(d=>chips.push([d,null,'dept-deals']));
-  document.getElementById('deals-chips').innerHTML=chips.map(([lbl,id,cid])=>
-    `<span class="chip" onclick="${id?`document.getElementById('${id}').checked=false;renderDeals()`:
-    `clearDeptCB('${cid}','${escH(lbl)}');renderDeals()`}">${escH(lbl)} <span class="chip-x">×</span></span>`).join('');
+  depts.forEach(d=>chips.push(decodeEntities(d)));
+  document.getElementById('deals-chips').innerHTML=chips.map(lbl=>
+    `<span class="chip" onclick="clearDeptCB('dept-deals','${escH(lbl)}');renderDeals()">${escH(lbl)} <span class="chip-x">×</span></span>`
+  ).join('');
 
   const grid=document.getElementById('deals-grid');
   if(!deals.length){grid.innerHTML='<div class="empty"><div class="empty-icon">🔍</div>No deals match your filters.</div>';return;}
@@ -1109,11 +1655,17 @@ function renderDeals(){
   attachDealCBListeners();
 }
 
+
 // Generate deal card HTML (checkbox overlay)
 function dealCardHtml(d){
   const emoji=deptEmoji(d.department);
+  const title=decodeEntities(d.title);
+  const desc=decodeEntities(d.description);
+  const finePrint=decodeEntities(d.fine_print);
+  const saveLine=decodeEntities(d.save_line);
+  const savings=decodeEntities(d.savings);
   const img=d.image_url
-    ?`<img class="deal-card-img" src="${escH(d.image_url)}" alt="${escH(d.title)}" loading="lazy"
+    ?`<img class="deal-card-img" src="${escH(d.image_url)}" alt="${escH(title)}" loading="lazy"
         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
        <div class="deal-card-img-ph" style="display:none">${emoji}</div>`
     :`<div class="deal-card-img-ph">${emoji}</div>`;
@@ -1125,19 +1677,20 @@ function dealCardHtml(d){
   const cbId=`dcb-${d.id}`;
   return `<div class="deal-card">
     <div class="deal-add-wrap">
-      <input type="checkbox" class="deal-add-cb" id="${cbId}" data-title="${escH(d.title)}" data-id="${escH(d.id)}">
+      <input type="checkbox" class="deal-add-cb" id="${cbId}" data-title="${escH(title)}" data-id="${escH(d.id)}">
       <label class="deal-add-lbl" for="${cbId}" title="Add to My List"></label>
     </div>
     ${img}
     <div class="deal-card-body">
-      ${d.department?`<div class="deal-card-dept">${escH(d.department)}</div>`:''}
-      <div class="deal-card-title">${escH(d.title)}</div>
-      ${d.description?`<div class="deal-card-desc">${escH(d.description)}</div>`:''}
-      <div class="deal-card-price">${escH(d.savings||'')}</div>
-      ${d.save_line?`<div class="deal-card-save">${escH(d.save_line)}</div>`:''}
-      ${(d.valid_from||d.valid_thru)?`<div class="deal-card-valid">📅 Valid ${escH(d.valid_from)}–${escH(d.valid_thru)}</div>`:''}
-      ${d.fine_print?`<div class="deal-card-fine">${escH(d.fine_print)}</div>`:''}
+      ${d.department?`<div class="deal-card-dept">${escH(decodeEntities(d.department))}</div>`:''}
+      <div class="deal-card-title">${escH(title)}</div>
+      ${desc?`<div class="deal-card-desc">${escH(desc)}</div>`:''}
+      <div class="deal-card-price">${escH(savings)}</div>
+      ${saveLine?`<div class="deal-card-save">${escH(saveLine)}</div>`:''}
+      ${(d.valid_from||d.valid_thru)?`<div class="deal-card-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
+      ${finePrint?`<div class="deal-card-fine">${escH(finePrint)}</div>`:''}
       ${badges.length?`<div class="deal-card-badges">${badges.join('')}</div>`:''}
+      ${d.has_coupon?`<a class="btn-clip" href="https://www.publix.com/savings/digital-coupons${d.coupon_id?'?cid='+d.coupon_id:''}" target="_blank" rel="noopener">✂️ Clip Coupon</a>`:''}
     </div></div>`;
 }
 
@@ -1199,11 +1752,12 @@ function computeMatches(){
 
   buildDeptFilters('dept-matches',_matchDeptCts,'renderMatches');
 
-  // Update match filter counts
-  document.getElementById('mfcnt-weekly').textContent =_allMatches.filter(d=>d.saving_type==='WeeklyAd').length||'';
-  document.getElementById('mfcnt-extra').textContent  =_allMatches.filter(d=>d.is_extra).length||'';
-  document.getElementById('mfcnt-coupon').textContent =_allMatches.filter(d=>d.has_coupon).length||'';
-  document.getElementById('mfcnt-publix').textContent =_allMatches.filter(d=>d.is_publix_brand).length||'';
+  // Update match filter counts using same mappings as Deals page
+  document.getElementById('mfcnt-all').textContent    = _allMatches.length||'';
+  document.getElementById('mfcnt-weekly').textContent = _allMatches.filter(d=>d.saving_type==='WeeklyAd').length||'';
+  document.getElementById('mfcnt-bogo').textContent   = _allMatches.filter(d=>isBogo(d)).length||'';
+  document.getElementById('mfcnt-coupon').textContent = _allMatches.filter(d=>isCoupon(d)).length||'';
+  document.getElementById('mfcnt-extra').textContent  = _allMatches.filter(d=>isExtra(d)).length||'';
 
   // Validity info
   const firstDeal=_allDeals.find(d=>d.valid_from||d.valid_thru);
@@ -1227,46 +1781,68 @@ function onThresholdChange(){
 }
 
 function fuzzyScore(item, title){
+  if(!item||!title) return 0;
+  // Substring match: if the full item appears anywhere in title, it's a strong match
+  if(title.includes(item)) return 100;
   const iT=item.split(/\s+/).filter(Boolean);
   const tT=title.split(/\s+/).filter(Boolean);
-  let m=0;
-  for(const t of iT){ if(tT.some(tt=>tt.includes(t)||t.includes(tt))) m++; }
   if(!iT.length) return 0;
-  const p=m/iT.length, r=m/Math.max(tT.length,1);
-  return Math.round(2*p*r/(p+r+0.0001)*100);
+  // Count how many item words appear in the title
+  let m=0;
+  for(const t of iT){ if(tT.some(tt=>tt.includes(t))) m++; }
+  // Score based purely on precision (all item words found), not recall
+  // This avoids penalizing short search terms against long deal titles
+  const precision=m/iT.length;
+  return Math.round(precision*100);
+}
+
+function onMatchFilter(changed){
+  const ids=['mf-all','mf-weekly','mf-bogo','mf-coupon','mf-extra'];
+  const els=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+  if(changed==='all' && els['mf-all'].checked){
+    // "All" checked → uncheck specifics
+    ['mf-weekly','mf-bogo','mf-coupon','mf-extra'].forEach(id=>els[id].checked=false);
+  } else if(changed!=='all'){
+    // A specific filter changed → uncheck "All"
+    els['mf-all'].checked=false;
+    // If nothing is checked, fall back to "All" (matches are already personal — no reason to hide)
+    const anyChecked=['mf-weekly','mf-bogo','mf-coupon','mf-extra'].some(id=>els[id].checked);
+    if(!anyChecked) els['mf-all'].checked=true;
+  }
+  renderMatches();
 }
 
 function renderMatches(){
-  const q      =(document.getElementById('matches-q').value||'').toLowerCase();
-  const mfW    =document.getElementById('mf-weekly').checked;
-  const mfE    =document.getElementById('mf-extra').checked;
-  const mfCo   =document.getElementById('mf-coupon').checked;
-  const mfPu   =document.getElementById('mf-publix').checked;
-  const depts  =getCheckedDepts('dept-matches');
-  const typeAny=mfE||mfCo||mfPu;
+  const q     =(document.getElementById('matches-q').value||'').toLowerCase();
+  const mfAll =document.getElementById('mf-all').checked;
+  const mfW   =document.getElementById('mf-weekly').checked;
+  const mfBogo=document.getElementById('mf-bogo').checked;
+  const mfCo  =document.getElementById('mf-coupon').checked;
+  const mfE   =document.getElementById('mf-extra').checked;
+  const depts =getCheckedDepts('dept-matches');
 
   let matches=_allMatches.filter(d=>{
-    if(mfCo && d.has_coupon) return true;
-    if(mfPu && d.is_publix_brand) return true;
-    if(mfE  && d.is_extra) return true;
-    if(!typeAny && mfW) return d.saving_type==='WeeklyAd';
-    if(!typeAny && !mfW) return true;
-    if(mfW && d.saving_type==='WeeklyAd') return true;
+    if(mfAll) return true;
+    if(mfBogo && isBogo(d))   return true;
+    if(mfCo   && isCoupon(d)) return true;
+    if(mfE    && isExtra(d))  return true;
+    // "Weekly ad" includes BOGOs that are on the weekly ad — they're weekly deals too
+    if(mfW    && d.saving_type==='WeeklyAd') return true;
     return false;
   });
   if(depts.length) matches=matches.filter(d=>depts.includes(d.department||''));
-  if(q) matches=matches.filter(d=>(d.title||'').toLowerCase().includes(q)||(d.my_item||'').toLowerCase().includes(q));
+  if(q) matches=matches.filter(d=>
+    (d.title||'').toLowerCase().includes(q)||
+    (d.my_item||'').toLowerCase().includes(q)
+  );
 
   document.getElementById('matches-meta').textContent=matches.length+' match'+(matches.length!==1?'es':'')+' shown';
 
   const chips=[];
-  if(mfE)  chips.push(['Extra Savings','mf-extra',null]);
-  if(mfCo) chips.push(['Coupons','mf-coupon',null]);
-  if(mfPu) chips.push(['Publix Brand','mf-publix',null]);
-  depts.forEach(d=>chips.push([d,null,'dept-matches']));
-  document.getElementById('matches-chips').innerHTML=chips.map(([lbl,id,cid])=>
-    `<span class="chip" onclick="${id?`document.getElementById('${id}').checked=false;renderMatches()`:
-    `clearDeptCB('${cid}','${escH(lbl)}');renderMatches()`}">${escH(lbl)} <span class="chip-x">×</span></span>`).join('');
+  depts.forEach(d=>chips.push(decodeEntities(d)));
+  document.getElementById('matches-chips').innerHTML=chips.map(lbl=>
+    `<span class="chip" onclick="clearDeptCB('dept-matches','${escH(lbl)}');renderMatches()">${escH(lbl)} <span class="chip-x">×</span></span>`
+  ).join('');
 
   const grid=document.getElementById('matches-grid');
   if(!matches.length){
@@ -1279,20 +1855,25 @@ function renderMatches(){
   }
   grid.innerHTML=matches.map(d=>{
     const emoji=deptEmoji(d.department);
+    const title=decodeEntities(d.title);
+    const desc=decodeEntities(d.description);
+    const savings=decodeEntities(d.savings);
+    const saveLine=decodeEntities(d.save_line);
     const img=d.image_url
-      ?`<img class="match-card-img" src="${escH(d.image_url)}" alt="${escH(d.title)}" loading="lazy"
+      ?`<img class="match-card-img" src="${escH(d.image_url)}" alt="${escH(title)}" loading="lazy"
           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
          <div class="match-card-img-ph" style="display:none">${emoji}</div>`
       :`<div class="match-card-img-ph">${emoji}</div>`;
     return `<div class="match-card">${img}
       <div class="match-card-body">
         <span class="match-myitem">${escH(d.my_item)}</span>
-        <div class="match-title">${escH(d.title)}</div>
-        ${d.description?`<div class="match-desc">${escH(d.description)}</div>`:''}
-        <div class="match-price">${escH(d.savings||'')}</div>
-        ${d.save_line?`<div class="match-save">${escH(d.save_line)}</div>`:''}
-        ${(d.valid_from||d.valid_thru)?`<div class="match-valid">📅 Valid ${escH(d.valid_from)}–${escH(d.valid_thru)}</div>`:''}
+        <div class="match-title">${escH(title)}</div>
+        ${desc?`<div class="match-desc">${escH(desc)}</div>`:''}
+        <div class="match-price">${escH(savings)}</div>
+        ${saveLine?`<div class="match-save">${escH(saveLine)}</div>`:''}
+        ${(d.valid_from||d.valid_thru)?`<div class="match-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
         <div class="match-score">Match: ${d.match_score}%</div>
+        ${d.has_coupon?`<a class="btn-clip" href="https://www.publix.com/savings/digital-coupons${d.coupon_id?'?cid='+d.coupon_id:''}" target="_blank" rel="noopener">✂️ Clip Coupon</a>`:''}
       </div></div>`;
   }).join('');
 }
@@ -1300,23 +1881,156 @@ function renderMatches(){
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN
 // ═══════════════════════════════════════════════════════════════════
-function initAdmin(){
-  if(adminKey){
-    document.getElementById('admin-login-sec').style.display='none';
-    document.getElementById('admin-dash').style.display='block';
-    adminLoadLogs(); adminLoadUsers();
+// ── Admin sidebar navigation ─────────────────────────────────────────────────
+let _adminActivePage = 'users';
+function adminNav(name){
+  _adminActivePage = name;
+  ['users','reports','logging'].forEach(t=>{
+    document.getElementById('anav-'+t).classList.toggle('active', t===name);
+    document.getElementById('apage-'+t).classList.toggle('active', t===name);
+  });
+  // Lazy-load on first visit
+  if(name==='reports'){
+    const sb=document.getElementById('admin-stats-body');
+    if(sb && (sb.textContent.includes('Loading')||sb.textContent.trim()==='')) adminLoadStats();
+  }
+  if(name==='logging'){
+    const le=document.getElementById('admin-logs-el');
+    if(le && (le.textContent.includes('Loading')||le.textContent.trim()==='')) adminLoadLogs();
   }
 }
-function adminLogin(){
+
+function adminSignOut(){
+  adminKey=null;
+  sessionStorage.removeItem('pdc_admin');
+  document.getElementById('admin-dash').style.display='none';
+  document.getElementById('admin-login-sec').style.display='';
+  document.getElementById('admin-secret-inp').value='';
+  setMsg('admin-login-msg','','');
+}
+async function initAdmin(){
+  if(adminKey){
+    // Verify the cached secret is still valid before showing the dashboard
+    try{
+      const res=await fetch(API+'/admin/scrape-logs',{headers:{'Content-Type':'application/json','Authorization':'AdminSecret '+adminKey}});
+      if(res.status===401){
+        adminKey=null;sessionStorage.removeItem('pdc_admin');
+        return; // show login form
+      }
+    }catch(_){}
+    document.getElementById('admin-login-sec').style.display='none';
+    document.getElementById('admin-dash').style.display='block';
+    adminLoadUsers();  // other tabs load lazily
+  }
+}
+async function adminLogin(){
   const s=document.getElementById('admin-secret-inp').value.trim();
   if(!s){setMsg('admin-login-msg','Enter the admin secret.','err');return;}
-  adminKey=s;sessionStorage.setItem('pdc_admin',s);
-  document.getElementById('admin-login-sec').style.display='none';
-  document.getElementById('admin-dash').style.display='block';
-  adminLoadLogs();adminLoadUsers();
+  const btn=document.querySelector('#admin-login-sec .btn-save');
+  if(btn){btn.disabled=true;btn.textContent='Verifying…';}
+  try{
+    // Verify the secret by calling a real admin endpoint before accepting it
+    const res=await fetch(API+'/admin/scrape-logs',{headers:{'Content-Type':'application/json','Authorization':'AdminSecret '+s}});
+    if(res.status===401){
+      setMsg('admin-login-msg','Incorrect admin secret.','err');
+      return;
+    }
+    if(!res.ok && res.status!==200){
+      // Any non-auth error still means the secret was accepted
+      // only 401 means wrong password
+    }
+    adminKey=s;sessionStorage.setItem('pdc_admin',s);
+    document.getElementById('admin-login-sec').style.display='none';
+    document.getElementById('admin-dash').style.display='block';
+    adminLoadUsers();  // other tabs load lazily
+  }catch(e){
+    setMsg('admin-login-msg','Could not reach the server.','err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Authenticate';}
+  }
 }
 function adminHdrs(){return{'Content-Type':'application/json','Authorization':'AdminSecret '+adminKey};}
 
+
+async function adminLoadStats(){
+  const el=document.getElementById('admin-stats-body');
+  if(!el) return;
+  el.innerHTML='<div style="color:var(--ink-soft);font-size:13px">Loading…</div>';
+  try{
+    const res=await fetch(API+'/admin/stats',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+
+    const s=data;
+    const totalUsers=s.total_users||0;
+    const deletedUsers=s.deleted_users||0;
+    const avgItems=s.avg_items||0;
+    const noItems=s.no_items_count||0;
+    const byMonth=s.by_month||[];
+    const byGeo=s.by_geography||[];
+    const popular=s.popular_items||[];
+
+    // Monthly chart
+    const maxMonth=Math.max(1,...byMonth.map(m=>m.count));
+    const monthBars=byMonth.slice(-12).map(m=>{
+      const pct=Math.round((m.count/maxMonth)*100);
+      const lbl=m.month.slice(5); // "MM"
+      return `<div class="smc-bar-wrap" title="${m.month}: ${m.count} users">
+        <div class="smc-bar" style="height:${pct}%;flex:1"></div>
+        <div class="smc-lbl">${lbl}</div>
+      </div>`;
+    }).join('');
+
+    // Geography bars
+    const maxGeo=Math.max(1,...byGeo.map(g=>g.count));
+    const geoBars=byGeo.map(g=>{
+      const pct=Math.round((g.count/maxGeo)*100);
+      return `<li><span style="flex:0 0 130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(g.location)}">${escH(g.location)}</span>
+        <div class="sl-bar-wrap"><div class="sl-bar" style="width:${pct}%"></div></div>
+        <span class="sl-ct">${g.count}</span></li>`;
+    }).join('');
+
+    // Popular items bars
+    const maxPop=Math.max(1,...popular.map(p=>p.count));
+    const popBars=popular.map(p=>{
+      const pct=Math.round((p.count/maxPop)*100);
+      return `<li><span style="flex:0 0 160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(p.item)}">${escH(p.item)}</span>
+        <div class="sl-bar-wrap"><div class="sl-bar" style="width:${pct}%;background:var(--amber)"></div></div>
+        <span class="sl-ct">${p.count}</span></li>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-val">${totalUsers}</div><div class="stat-lbl">Total Users</div></div>
+        <div class="stat-card"><div class="stat-val">${avgItems}</div><div class="stat-lbl">Avg List Items</div></div>
+        <div class="stat-card"><div class="stat-val">${totalUsers-noItems}</div><div class="stat-lbl">Active Lists</div></div>
+        <div class="stat-card"><div class="stat-val">${noItems}</div><div class="stat-lbl">Empty Lists</div></div>
+        <div class="stat-card"><div class="stat-val">${deletedUsers}</div><div class="stat-lbl">Users Deleted</div></div>
+      </div>
+
+      <div style="margin-bottom:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)">Users Added by Month</div>
+      ${byMonth.length
+        ? `<div class="stat-month-chart">${monthBars}</div>`
+        : '<div style="font-size:13px;color:var(--ink-soft)">No data yet</div>'}
+
+      <div class="stats-two" style="margin-top:20px">
+        <div>
+          <div style="margin-bottom:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)">Users by Geography</div>
+          ${byGeo.length
+            ? `<ul class="stat-list">${geoBars}</ul>`
+            : '<div style="font-size:13px;color:var(--ink-soft)">No store data</div>'}
+        </div>
+        <div>
+          <div style="margin-bottom:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)">Most Popular List Items</div>
+          ${popular.length
+            ? `<ul class="stat-list">${popBars}</ul>`
+            : '<div style="font-size:13px;color:var(--ink-soft)">No list data yet</div>'}
+        </div>
+      </div>`;
+  }catch(e){
+    el.innerHTML=`<div style="color:var(--red);font-size:13px">Failed to load stats: ${escH(e.message)}</div>`;
+  }
+}
 async function adminLoadLogs(){
   document.getElementById('admin-logs-el').innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:12px 0">Loading…</div>';
   try{
@@ -1388,14 +2102,45 @@ async function adminLoadTail(){
     termEl.scrollTop=termEl.scrollHeight;
   }catch(e){loadEl.textContent='Error: '+e.message;}
 }
+let _allAdminUsers=[];
+let _adminUserPage=0;
+const ADMIN_PAGE_SIZE=25;
+
 async function adminLoadUsers(){
   try{
     const res=await fetch(API+'/admin/users',{headers:adminHdrs()});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed');
-    const users=data.users||[];
-    document.getElementById('admin-user-ct').textContent=`(${users.length})`;
-    document.getElementById('admin-tbody').innerHTML=users.map(u=>`
+    _allAdminUsers=data.users||[];
+    _adminUserPage=0;
+    document.getElementById('admin-user-ct').textContent=`(${_allAdminUsers.length})`;
+    document.getElementById('admin-user-search').value='';
+    adminRenderUsers();
+  }catch(e){document.getElementById('admin-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);font-size:13px">Error: ${escH(e.message)}</td></tr>`;}
+}
+
+function adminFilterUsers(){
+  _adminUserPage=0;
+  adminRenderUsers();
+}
+
+function adminRenderUsers(){
+  const q=(document.getElementById('admin-user-search').value||'').toLowerCase();
+  const filtered=_allAdminUsers.filter(u=>
+    !q ||
+    (u.email||'').toLowerCase().includes(q) ||
+    (u.store_id||'').includes(q) ||
+    (u.store_name||'').toLowerCase().includes(q)
+  );
+
+  const total=filtered.length;
+  const totalPages=Math.max(1,Math.ceil(total/ADMIN_PAGE_SIZE));
+  if(_adminUserPage>=totalPages) _adminUserPage=totalPages-1;
+  const start=_adminUserPage*ADMIN_PAGE_SIZE;
+  const page=filtered.slice(start, start+ADMIN_PAGE_SIZE);
+
+  document.getElementById('admin-tbody').innerHTML=page.length
+    ? page.map(u=>`
       <tr>
         <td><strong>${escH(u.email)}</strong><br><span style="font-size:11px;color:var(--ink-soft)">${escH(u.created_at?.slice(0,10)||'')}</span></td>
         <td><span style="font-size:12px">${escH(u.notify_email||u.email)}</span></td>
@@ -1407,8 +2152,24 @@ async function adminLoadUsers(){
           <button class="abn a" onclick="adminShowEmail('${escH(u.email)}')">Reset Email</button>
           <button class="abn r" onclick="adminDelUser('${escH(u.email)}')">Delete</button>
         </div></td>
-      </tr>`).join('');
-  }catch(e){document.getElementById('admin-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);font-size:13px">Error: ${escH(e.message)}</td></tr>`;}
+      </tr>`).join('')
+    : `<tr><td colspan="6" style="color:var(--ink-soft);font-size:13px;padding:16px">${q?'No users match your search.':'No users found.'}</td></tr>`;
+
+  // Pagination controls
+  const pages=document.getElementById('admin-user-pages');
+  if(total<=ADMIN_PAGE_SIZE){pages.innerHTML='';return;}
+  pages.innerHTML=`
+    <span>Showing ${start+1}–${Math.min(start+ADMIN_PAGE_SIZE,total)} of ${total}</span>
+    <div style="display:flex;gap:6px">
+      <button class="abn g" onclick="adminUserPage(-1)" ${_adminUserPage===0?'disabled':''}>← Prev</button>
+      <span style="padding:4px 8px">${_adminUserPage+1} / ${totalPages}</span>
+      <button class="abn g" onclick="adminUserPage(1)" ${_adminUserPage>=totalPages-1?'disabled':''}>Next →</button>
+    </div>`;
+}
+
+function adminUserPage(dir){
+  _adminUserPage+=dir;
+  adminRenderUsers();
 }
 function showCreateUser(){
   document.getElementById('ac-email').value='';clrPin('.ac-pin');setMsg('ac-msg','','');
@@ -1432,7 +2193,9 @@ async function adminDelUser(em){
     const res=await fetch(API+'/admin/users/'+encodeURIComponent(em),{method:'DELETE',headers:adminHdrs()});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed');
-    adminLoadUsers();
+    _allAdminUsers=_allAdminUsers.filter(u=>u.email!==em);
+    document.getElementById('admin-user-ct').textContent=`(${_allAdminUsers.length})`;
+    adminRenderUsers();
   }catch(e){alert('Error: '+e.message);}
 }
 let _apEmail='';
@@ -1476,9 +2239,226 @@ async function adminClearItems(){
   }catch(e){setMsg('ai-msg',e.message,'err');}
 }
 
+
+// ── Auth Log ──────────────────────────────────────────────────────────────────
+let _allAuthLogs = [];
+async function adminLoadAuthLogs(){
+  document.getElementById('auth-log-wrap').innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px">Loading…</div>';
+  try{
+    const res=await fetch(API+'/admin/auth-logs?limit=200',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    _allAuthLogs=data.logs||[];
+    adminRenderAuthLogs();
+  }catch(e){
+    document.getElementById('auth-log-wrap').innerHTML=`<div style="color:var(--red);font-size:13px;padding:8px">Error: ${escH(e.message)}</div>`;
+  }
+}
+function adminRenderAuthLogs(){
+  const filter=document.getElementById('auth-log-filter').value;
+  let logs=_allAuthLogs;
+  if(filter==='success') logs=logs.filter(l=>l.success);
+  if(filter==='fail')    logs=logs.filter(l=>!l.success);
+  if(!logs.length){
+    document.getElementById('auth-log-wrap').innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:10px">No auth events found.</div>';
+    return;
+  }
+  const rows=logs.map(l=>{
+    const dt=new Date(l.ts);
+    const est=dt.toLocaleString('en-US',{timeZone:'America/New_York',month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+    const geo=[l.city,l.region,l.country].filter(Boolean).join(', ')||'—';
+    const ua=(l.user_agent||'').replace(/Mozilla\/5\.0\s*/,'').slice(0,60);
+    const badge=l.success
+      ?'<span class="ok">✓ Login</span>'
+      :'<span class="fail">✗ Fail</span>';
+    return `<tr>
+      <td style="white-space:nowrap">${est}</td>
+      <td>${badge}</td>
+      <td><strong style="font-size:12px">${escH(l.email)}</strong></td>
+      <td style="font-family:var(--mono);font-size:11px">${escH(l.ip||'—')}</td>
+      <td style="font-size:11px">${escH(geo)}</td>
+      <td style="font-size:11px;color:var(--ink-soft);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(l.user_agent||'')}">${escH(ua)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('auth-log-wrap').innerHTML=`
+    <table class="auth-log-tbl">
+      <thead><tr><th>Time (ET)</th><th>Result</th><th>Email</th><th>IP</th><th>Location</th><th>Browser</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── App / Frontend / API / Email / Cache Logs ────────────────────────────────
+let _allAppLogs = [];
+async function adminLoadAppLogs(){
+  document.getElementById('app-log-wrap').innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px">Loading…</div>';
+  try{
+    const res=await fetch(API+'/admin/app-logs?limit=300',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    _allAppLogs=data.logs||[];
+    adminRenderAppLogs();
+  }catch(e){
+    document.getElementById('app-log-wrap').innerHTML=`<div style="color:var(--red);font-size:13px;padding:8px">Error: ${escH(e.message)}</div>`;
+  }
+}
+function adminRenderAppLogs(){
+  const filter=document.getElementById('app-log-filter').value;
+  let logs=_allAppLogs;
+  if(filter!=='all') logs=logs.filter(l=>l.source===filter);
+  const el=document.getElementById('app-log-wrap');
+  if(!logs.length){
+    el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:10px">No logs found.</div>';
+    return;
+  }
+  const SOURCE_ICONS={'frontend':'💻','api':'⚡','email':'✉️','cache':'🗄️'};
+  const rows=logs.map(l=>{
+    const dt=new Date(l.ts);
+    const est=dt.toLocaleString('en-US',{timeZone:'America/New_York',month:'numeric',day:'numeric',
+      hour:'numeric',minute:'2-digit',hour12:true});
+    const lvl=l.level||'info';
+    const src=l.source||'?';
+    const icon=SOURCE_ICONS[src]||'•';
+    let detail='';
+    if(src==='email'){
+      detail=`to: ${escH(l.to||'')} | subj: ${escH((l.subject||'').slice(0,40))} | ${l.ok?'✓ sent':'✗ failed'}`;
+    } else if(src==='cache'){
+      detail=`store ${escH(l.store_id||'?')} | ${l.hit?'● hit':'○ miss'} | ${escH(l.endpoint||'')}`;
+    } else if(src==='api'){
+      detail=`${escH(l.method||'?')} ${escH(l.path||'')} → ${l.status||'?'} | ${escH((l.message||'').slice(0,80))}`;
+    } else {
+      const msg=(l.message||'')+(l.stack?' │ '+l.stack.split('\n')[0]:'');
+      detail=escH(msg.slice(0,200));
+      if(l.url) detail+=` <span style="color:var(--ink-soft);font-size:10px">[${escH(l.url.slice(0,60))}]</span>`;
+    }
+    return `<div class="app-log-row lv-${escH(lvl)}">
+      <span class="alts">${est}</span>
+      <span class="alsrc">${icon} ${escH(src)}</span>
+      <span class="almsg">${detail}</span>
+    </div>`;
+  }).join('');
+  el.innerHTML=rows;
+}
+
+// ── Cache stats widget ────────────────────────────────────────────────────────
+async function adminLoadCacheStats(){
+  const el=document.getElementById('cache-stats-wrap');
+  el.innerHTML='<div style="color:var(--ink-soft);font-size:13px">Loading…</div>';
+  try{
+    const res=await fetch(API+'/admin/app-logs?limit=500',{headers:adminHdrs()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed');
+    const cacheLogs=(data.logs||[]).filter(l=>l.source==='cache');
+    if(!cacheLogs.length){
+      el.innerHTML='<div style="color:var(--ink-soft);font-size:13px">No cache events recorded yet.</div>';
+      return;
+    }
+    // Group by store
+    const byStore={};
+    for(const l of cacheLogs){
+      const s=l.store_id||'unknown';
+      if(!byStore[s]) byStore[s]={hits:0,misses:0,store:s};
+      if(l.hit) byStore[s].hits++; else byStore[s].misses++;
+    }
+    const totalHits=cacheLogs.filter(l=>l.hit).length;
+    const totalMiss=cacheLogs.length-totalHits;
+    const hitPct=cacheLogs.length?Math.round(totalHits/cacheLogs.length*100):0;
+    const rows=Object.values(byStore).sort((a,b)=>(b.hits+b.misses)-(a.hits+a.misses)).map(s=>{
+      const total=s.hits+s.misses;
+      const pct=total?Math.round(s.hits/total*100):0;
+      return `<tr>
+        <td style="font-family:var(--mono);font-size:12px">#${escH(s.store)}</td>
+        <td style="font-size:12px;color:var(--green)">${s.hits}</td>
+        <td style="font-size:12px;color:var(--red)">${s.misses}</td>
+        <td style="font-size:12px">${pct}%</td>
+        <td style="min-width:100px"><div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--green);border-radius:3px"></div></div></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML=`
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card"><div class="stat-val">${totalHits+totalMiss}</div><div class="stat-lbl">Total Requests</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--green)">${totalHits}</div><div class="stat-lbl">Cache Hits</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--amber)">${totalMiss}</div><div class="stat-lbl">Cache Misses</div></div>
+        <div class="stat-card"><div class="stat-val">${hitPct}%</div><div class="stat-lbl">Hit Rate</div></div>
+      </div>
+      <table class="admin-tbl" style="font-size:13px">
+        <thead><tr><th>Store</th><th>Hits</th><th>Misses</th><th>Rate</th><th style="min-width:100px"></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }catch(e){
+    el.innerHTML=`<div style="color:var(--red);font-size:13px">Error: ${escH(e.message)}</div>`;
+  }
+}
+
+// ── Frontend error reporting ───────────────────────────────────────────────────
+window.onerror = function(msg, src, line, col, err){
+  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({level:'error',message:String(msg),stack:err&&err.stack||'',url:src+'#L'+line+':'+col})});}catch(_){}
+};
+window.onunhandledrejection = function(e){
+  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({level:'error',message:'Unhandled rejection: '+String(e.reason),stack:e.reason&&e.reason.stack||'',url:window.location.href})});}catch(_){}
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// WELCOME MODAL
+// ═══════════════════════════════════════════════════════════════════
+let _wlcStep = 0;
+const WLC_STEPS = 3;
+
+function wlcShow(){
+  _wlcStep = 0;
+  _wlcRender();
+  document.getElementById('wlc-overlay').classList.add('vis');
+}
+
+function _wlcRender(){
+  // Show correct step
+  for(let i=0;i<WLC_STEPS;i++){
+    document.getElementById('wlc-step-'+i).classList.toggle('active', i===_wlcStep);
+    document.getElementById('wlc-dot-'+i).classList.toggle('active', i===_wlcStep);
+  }
+  // Update button label
+  const btn = document.getElementById('wlc-next-btn');
+  if(_wlcStep < WLC_STEPS-1){
+    btn.textContent = 'Next →';
+  } else {
+    btn.textContent = "Let’s go →";
+    btn.style.background = 'var(--green)';
+  }
+}
+
+function wlcNext(){
+  if(_wlcStep < WLC_STEPS-1){
+    _wlcStep++;
+    _wlcRender();
+  } else {
+    wlcDismiss();
+  }
+}
+
+function wlcDismiss(){
+  document.getElementById('wlc-overlay').classList.remove('vis');
+  // Mark this user as welcomed so we never show again
+  if(userEmail) localStorage.setItem('pdc_welcomed_'+userEmail, '1');
+  // Ensure we're on the store panel after dismissal
+  showPanel('store');
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // UTILS
 // ═══════════════════════════════════════════════════════════════════
+function decodeEntities(s){
+  if(!s) return '';
+  // Replace numeric HTML entities (&#13; &#10; etc.) and named ones
+  return String(s)
+    .replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(parseInt(n,10)))
+    .replace(/&#x([0-9a-fA-F]+);/g,(_,h)=>String.fromCharCode(parseInt(h,16)))
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&nbsp;/g,' ')
+    // Collapse CR+LF sequences left after entity decode into a single space
+    .replace(/[\r\n]+/g,' ').trim();
+}
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function closeOv(id){document.getElementById(id).classList.remove('vis');}
 
@@ -1492,13 +2472,103 @@ function closeOv(id){document.getElementById(id).classList.remove('vis');}
     if(!res.ok){localStorage.removeItem('pdc_token');localStorage.removeItem('pdc_email');return;}
     const data=await res.json();
     prefs=data.prefs;userEmail=data.email;
-    enterApp();
+    enterApp({isFirstLogin: !localStorage.getItem('pdc_welcomed_'+data.email) && !(prefs && prefs.store_id)});
   }catch(_){}
 })();
 
 document.querySelectorAll('.overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o) o.classList.remove('vis');});
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// AUTOCOMPLETE
+// ═══════════════════════════════════════════════════════════════════
+let _acIdx = -1;
+
+function acGetTitles() {
+  const seen = new Set();
+  const titles = [];
+  for (const d of _allDeals) {
+    const t = (d.title || '').trim();
+    if (t && !seen.has(t.toLowerCase())) {
+      seen.add(t.toLowerCase());
+      titles.push(t);
+    }
+  }
+  return titles;
+}
+
+function acInput() {
+  const q = (document.getElementById('new-item').value || '').trim();
+  const drop = document.getElementById('ac-drop');
+  if (!q) { drop.style.display = 'none'; return; }
+
+  const qLow = q.toLowerCase();
+  const all = acGetTitles();
+  const words = qLow.split(/\s+/).filter(Boolean);
+  const matches = all.filter(t => words.some(w => t.toLowerCase().includes(w)));
+
+  matches.sort((a, b) => {
+    const aStart = a.toLowerCase().startsWith(qLow) ? 0 : 1;
+    const bStart = b.toLowerCase().startsWith(qLow) ? 0 : 1;
+    return aStart - bStart || a.localeCompare(b);
+  });
+
+  const suggestions = matches.slice(0, 8);
+  _acIdx = -1;
+
+  drop.innerHTML = [
+    `<div class="ac-item ac-item-free" data-val="${escH(q)}" onmousedown="acSelect(this.dataset.val)">${escH(q)}</div>`,
+    ...suggestions.map(s =>
+      `<div class="ac-item ac-item-deal" data-val="${escH(s)}" onmousedown="acSelect(this.dataset.val)">${escH(s)}</div>`
+    )
+  ].join('');
+
+  drop.style.display = q ? '' : 'none';
+}
+
+function acKeydown(e) {
+  const drop = document.getElementById('ac-drop');
+  const items = drop.querySelectorAll('.ac-item');
+  if (drop.style.display === 'none' || !items.length) {
+    if (e.key === 'Enter') addItem();
+    return;
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _acIdx = Math.min(_acIdx + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('ac-sel', i === _acIdx));
+    if (_acIdx >= 0) document.getElementById('new-item').value = items[_acIdx].dataset.val || items[_acIdx].textContent.trim();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _acIdx = Math.max(_acIdx - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('ac-sel', i === _acIdx));
+    if (_acIdx >= 0) document.getElementById('new-item').value = items[_acIdx].dataset.val || items[_acIdx].textContent.trim();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_acIdx >= 0 && items[_acIdx]) {
+      acSelect(items[_acIdx].dataset.val || items[_acIdx].textContent.trim());
+    } else {
+      addItem();
+    }
+  } else if (e.key === 'Escape') {
+    acHide();
+  }
+}
+
+function acSelect(val) {
+  document.getElementById('new-item').value = val;
+  acHide();
+  addItem();
+}
+
+function acHide() {
+  const drop = document.getElementById('ac-drop');
+  if (drop) drop.style.display = 'none';
+  _acIdx = -1;
+}
+
 </script>
+<div id="save-toast">✓ Saved</div>
 </body>
 </html>

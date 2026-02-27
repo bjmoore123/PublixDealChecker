@@ -30,6 +30,7 @@ fi
 
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 S3_FRONTEND="${APP_NAME}-frontend-${AWS_ACCOUNT_ID}"
+FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
 
 ok()     { echo "   ✓ $*"; }
 skip()   { echo "   - $* (already exists)"; }
@@ -38,7 +39,7 @@ exists() { "$@" > /dev/null 2>&1; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   Publix Deal Checker v4 — Serverless Deployment     ║"
+echo "║   Publix Deal Checker v5 — Serverless Deployment     ║"
 echo "║   Account: ${AWS_ACCOUNT_ID}   Region: ${AWS_REGION} ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
@@ -63,6 +64,8 @@ create_table "${APP_NAME}-users"       "email"
 create_table "${APP_NAME}-sessions"    "token"
 create_table "${APP_NAME}-deals"       "store_id"
 create_table "${APP_NAME}-scrape-logs" "job_id"
+create_table "${APP_NAME}-auth-logs"   "log_id"
+create_table "${APP_NAME}-app-logs"    "log_id"
 
 # ── STEP 2: IAM role ──────────────────────────────────────────────────────────
 echo "▶  2/8  IAM role"
@@ -81,7 +84,9 @@ if ! exists aws iam get-role --role-name "${LAMBDA_ROLE}"; then
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\"
+         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
+               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
+               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-app-logs\"
        ]},
       {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
        \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
@@ -101,7 +106,9 @@ else
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
          \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\"
+         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
+               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
+               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-app-logs\"
        ]},
       {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
        \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
@@ -121,11 +128,18 @@ LAMBDA_API_ZIP="${TMPDIR_PY}/lambda_api.zip"
 
 if [ ! -f "${SCRIPT_DIR}/lambda/api.py" ]; then echo "ERROR: lambda/api.py not found"; exit 1; fi
 
+PIP_CMD=$(which pip3 2>/dev/null || which pip 2>/dev/null || echo "python3 -m pip")
+
 API_BUILD_TMP="${TMPDIR_PY}/api_build"
 rm -rf "${API_BUILD_TMP}"; mkdir -p "${API_BUILD_TMP}"
 cp "${SCRIPT_DIR}/lambda/api.py" "${API_BUILD_TMP}/"
 info "Installing api dependencies (resend)..."
-${PIP_CMD:-pip3} install resend --target "${API_BUILD_TMP}" --quiet 2>/dev/null || true
+${PIP_CMD} install resend \
+  --target "${API_BUILD_TMP}" --quiet \
+  --platform manylinux2014_x86_64 \
+  --python-version 3.12 \
+  --only-binary=:all: 2>/dev/null || \
+${PIP_CMD} install resend --target "${API_BUILD_TMP}" --quiet
 python3 -c "
 import zipfile, os
 build_dir=r'${API_BUILD_TMP}'
@@ -140,7 +154,7 @@ with zipfile.ZipFile(dst,'w',zipfile.ZIP_DEFLATED) as z:
 print('API zip: '+dst)
 " || { echo "ERROR: Failed to create API zip"; exit 1; }
 
-API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR}}"
+API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR}}"
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_API}" --region "${AWS_REGION}"; then
   aws lambda create-function \
@@ -186,7 +200,6 @@ cp "${SCRIPT_DIR}/scraper/scraper.py" "${SCRAPER_TMP}/"
 cp "${SCRIPT_DIR}/scraper/matcher.py" "${SCRAPER_TMP}/"
 
 info "Installing scraper dependencies..."
-PIP_CMD=$(which pip3 2>/dev/null || which pip 2>/dev/null || echo "python3 -m pip")
 ${PIP_CMD} install resend rapidfuzz \
   --target "${SCRAPER_TMP}" --quiet \
   --platform manylinux2014_x86_64 \
@@ -211,7 +224,7 @@ print('Scraper zip: '+dst)
 RESEND_KEY_VAL=$(aws ssm get-parameter --name "/publix/resend-api-key" \
   --with-decryption --query Parameter.Value --output text --region "${AWS_REGION}" 2>/dev/null || echo "${RESEND_API_KEY}")
 
-SCRAPER_ENV="Variables={USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
+SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}"; then
   aws lambda create-function \
@@ -330,13 +343,16 @@ else
   skip "S3 bucket (frontend): ${S3_FRONTEND}"
 fi
 
-FRONTEND_TMP="$(mktemp /tmp/index_XXXXXX.html)"
-sed "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" \
-  "${SCRIPT_DIR}/frontend/index.html" > "${FRONTEND_TMP}"
-aws s3 cp "$(win_path "${FRONTEND_TMP}")" \
+python3 -c "
+import re, os
+src = open(r'${SCRIPT_DIR_PY}/frontend/index.html', encoding='utf-8').read()
+out = src.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}')
+open('index_deploy_tmp.html', 'w', encoding='utf-8').write(out)
+"
+MSYS_NO_PATHCONV=1 aws s3 cp index_deploy_tmp.html \
   "s3://${S3_FRONTEND}/index.html" \
-  --content-type "text/html" --cache-control "no-cache" --no-progress
-rm -f "${FRONTEND_TMP}"
+  --content-type "text/html" --cache-control "no-cache, no-store, must-revalidate" --no-progress
+rm -f index_deploy_tmp.html
 FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
 ok "Frontend deployed: ${FRONTEND_URL}"
 
@@ -370,7 +386,7 @@ ok "EventBridge → scraper target set"
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════════╗"
-echo "║  ✅  Deployment complete!  (v4)                                   ║"
+echo "║  ✅  Deployment complete!  (v5)                                   ║"
 echo "╠═══════════════════════════════════════════════════════════════════╣"
 echo "║  Frontend:  ${FRONTEND_URL}"
 echo "║  API:       ${API_URL}"

@@ -48,8 +48,11 @@ logs_client     = boto3.client("logs",   region_name=_region)
 users_table     = dynamodb.Table(os.environ["USERS_TABLE"])
 sessions_table  = dynamodb.Table(os.environ["SESSIONS_TABLE"])
 scrape_logs_tbl = dynamodb.Table(os.environ.get("SCRAPE_LOGS_TABLE", "publix-deal-checker-scrape-logs"))
+auth_logs_tbl   = dynamodb.Table(os.environ.get("AUTH_LOGS_TABLE",  "publix-deal-checker-auth-logs"))
+app_logs_tbl    = dynamodb.Table(os.environ.get("APP_LOGS_TABLE",   "publix-deal-checker-app-logs"))
 
-ADMIN_SECRET     = os.environ.get("ADMIN_SECRET", "")
+# Strip any accidental whitespace/newlines that can sneak in via Lambda env vars
+ADMIN_SECRET     = (os.environ.get("ADMIN_SECRET", "") or "").strip()
 SCRAPER_FUNCTION = os.environ.get("SCRAPER_FUNCTION", "publix-deal-checker-scraper")
 LOG_GROUP        = f"/aws/lambda/{SCRAPER_FUNCTION}"
 
@@ -62,18 +65,24 @@ CORS = {
 
 SESSION_TTL_HOURS = 72
 
-SAVINGS_URL = (
+_SAVINGS_BASE = (
     "https://services.publix.com/api/v4/savings"
     "?smImg=235&enImg=368&fallbackImg=false&isMobile=false"
     "&page=1&pageSize=0&includePersonalizedDeals=false"
-    "&languageID=1&isWeb=true&getSavingType=AllDeals"
+    "&languageID=1&isWeb=true"
 )
+# KEY: publixstore must be sent as a REQUEST HEADER (not query param)
+# WeeklyAd and AllDeals are separate pools that must both be fetched
+SAVINGS_URL_WEEKLY  = _SAVINGS_BASE + "&getSavingType=WeeklyAd"
+SAVINGS_URL_COUPONS = _SAVINGS_BASE + "&getSavingType=AllDeals"
+SAVINGS_URL = SAVINGS_URL_COUPONS  # legacy alias
 
 DEFAULT_PREFS = {
     "store_id":      "",
     "store_name":    "",
     "store_address": "",
     "notify_email":  "",
+    "email_enabled": True,
     "items":         [],
     "matching":      {"threshold": 75},
     "notifications": {"only_matches": True},
@@ -91,7 +100,15 @@ class _Enc(json.JSONEncoder):
 def ok(body, status=200):
     return {"statusCode": status, "headers": CORS, "body": json.dumps(body, cls=_Enc)}
 
-def err(msg, status=400):
+def err(msg, status=400, _event=None, _path=None, _method=None):
+    if status >= 400 and status != 401 and status != 404:
+        # Log 4xx/5xx errors (skip auth failures and 404s to reduce noise)
+        try:
+            _log_app_event("api", "error" if status >= 500 else "warn",
+                           status=status, message=str(msg)[:300],
+                           path=_path or "", method=_method or "")
+        except Exception:
+            pass
     return {"statusCode": status, "headers": CORS, "body": json.dumps({"error": msg})}
 
 def hash_pin(pin: str) -> str:
@@ -120,7 +137,8 @@ def get_admin_auth(event) -> bool:
     # Strip prefix case-insensitively, compare secret case-sensitively
     for prefix in ("AdminSecret ", "adminsecret "):
         if auth.lower().startswith(prefix.lower()):
-            return auth[len(prefix):].strip() == ADMIN_SECRET
+            candidate = auth[len(prefix):].strip()
+            return candidate == ADMIN_SECRET
     # Accept raw secret with no prefix
     return auth == ADMIN_SECRET
 
@@ -150,15 +168,94 @@ def register(body):
     return ok({"message": "Account created. Please log in."}, 201)
 
 
+# ── auth event logging ───────────────────────────────────────────────────────
+
+def _get_client_ip(event: dict) -> str:
+    """Extract real client IP from API Gateway event."""
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    for h in ("x-forwarded-for", "x-real-ip"):
+        v = headers.get(h, "")
+        if v:
+            return v.split(",")[0].strip()
+    return (event.get("requestContext", {})
+                 .get("http", {})
+                 .get("sourceIp", "unknown"))
+
+
+def _geo_lookup(ip: str) -> dict:
+    """Look up country/city for an IP using ip-api.com (free, no key needed)."""
+    if not ip or ip in ("unknown", "127.0.0.1"):
+        return {}
+    try:
+        req = urllib.request.Request(
+            f"http://ip-api.com/json/{ip}?fields=country,regionName,city,status",
+            headers={"User-Agent": "publix-deal-checker/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as r:
+            d = json.loads(r.read())
+        if d.get("status") == "success":
+            return {"country": d.get("country",""), "region": d.get("regionName",""), "city": d.get("city","")}
+    except Exception:
+        pass
+    return {}
+
+
+def _log_auth_event(event: dict, email: str, success: bool, reason: str = ""):
+    """Write a login attempt record to the auth_logs DynamoDB table."""
+    try:
+        ip  = _get_client_ip(event)
+        geo = _geo_lookup(ip)
+        headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+        ua  = headers.get("user-agent", "")[:200]
+        now = datetime.now(timezone.utc).isoformat()
+        auth_logs_tbl.put_item(Item={
+            "log_id":    f"{now}#{secrets.token_hex(4)}",
+            "ts":        now,
+            "email":     email or "(unknown)",
+            "success":   success,
+            "ip":        ip,
+            "country":   geo.get("country", ""),
+            "region":    geo.get("region", ""),
+            "city":      geo.get("city", ""),
+            "user_agent": ua,
+            "reason":    reason,
+        })
+    except Exception:
+        pass  # never let logging break auth
+
+
+def _log_app_event(source: str, level: str = "info", **fields):
+    """Write a structured application log entry to app_logs DynamoDB table.
+    source: 'frontend' | 'api' | 'email' | 'cache'
+    Never raises — logging must never break the main request flow.
+    """
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        item = {
+            "log_id":  f"{now}#{secrets.token_hex(4)}",
+            "ts":      now,
+            "source":  source,
+            "level":   level,
+            **{k: v for k, v in fields.items() if v is not None},
+        }
+        app_logs_tbl.put_item(Item=item)
+    except Exception:
+        pass
+
+
 def login(body):
     email = (body.get("email") or "").strip().lower()
     pin   = str(body.get("pin") or "").strip()
     user  = users_table.get_item(Key={"email": email}).get("Item")
     if not user or user.get("pin_hash") != hash_pin(pin):
+        # We need the event to log it — login() is called from handler() which has it
+        # We'll log via a thread-local trick: store event on body dict
+        _log_auth_event(body.get("__event__", {}), email, False, "bad_pin")
         return err("Invalid email or PIN.", 401)
     token      = secrets.token_hex(32)
     expires_at = int((datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)).timestamp())
     sessions_table.put_item(Item={"token": token, "email": email, "expires_at": expires_at})
+    _log_auth_event(body.get("__event__", {}), email, True)
     prefs = _to_py(user.get("prefs", DEFAULT_PREFS))
     if not prefs.get("notify_email"):
         prefs["notify_email"] = email
@@ -225,64 +322,175 @@ def delete_account(event):
 
 # ── store search ──────────────────────────────────────────────────────────────
 
+def _parse_store_feature(f: dict) -> dict:
+    """Parse a GeoJSON feature from the storelocator API into a clean store dict."""
+    p    = f.get("properties") or f  # single-store endpoint returns props directly
+    geo  = f.get("geometry", {}).get("coordinates", [None, None])
+    addr = p.get("address") or {}
+    phones = p.get("phoneNumbers") or {}
+    img    = p.get("image") or {}
+    hours  = p.get("hours") or []
+    # Format today's hours (first entry = today)
+    hours_str = ""
+    if hours:
+        h = hours[0]
+        if h.get("isClosed"):
+            hours_str = "Closed today"
+        elif h.get("isOpen24Hours"):
+            hours_str = "Open 24 hours"
+        else:
+            def fmt_time(iso):
+                try:
+                    from datetime import datetime
+                    t = datetime.fromisoformat(iso)
+                    return t.strftime("%-I:%M %p").replace(":00 ", " ")
+                except Exception:
+                    return iso[11:16] if len(iso) > 15 else iso
+            hours_str = f"{fmt_time(h.get('openTime',''))} – {fmt_time(h.get('closeTime',''))}"
+    street  = addr.get("streetAddress","")
+    city    = addr.get("city","")
+    state   = addr.get("state","")
+    zipcode = addr.get("zip","")
+    address_full = f"{street}, {city}, {state} {zipcode}".strip(", ")
+    return {
+        "id":           str(p.get("storeNumber") or ""),
+        "name":         p.get("name") or "",
+        "short_name":   p.get("shortName") or "",
+        "street":       street,
+        "city":         city,
+        "state":        state,
+        "zip":          zipcode,
+        "address":      address_full,
+        "phone":        phones.get("Store",""),
+        "pharmacy_phone": phones.get("Pharmacy",""),
+        "hours_today":  hours_str,
+        "hours_raw":    hours,
+        "lat":          geo[0] if geo else None,
+        "lng":          geo[1] if geo else None,
+        "img_thumb":    img.get("thumbnail",""),
+        "img_hero":     img.get("hero",""),
+        "distance":     p.get("distance"),
+    }
+
+
+# Headers required by Publix storelocator API (CORS-protected, needs Origin)
+_STORE_HDRS = {
+    "Accept":          "application/geo+json",
+    "Accept-Encoding": "gzip, deflate",
+    "Origin":          "https://www.publix.com",
+    "Referer":         "https://www.publix.com/",
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
+
+def _store_fetch(url: str, timeout: int = 8) -> dict:
+    """Fetch from storelocator API, handling gzip transparently."""
+    import gzip as _gzip
+    req = urllib.request.Request(url, headers=_STORE_HDRS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        body = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            body = _gzip.decompress(body)
+        return json.loads(body)
+
+
 def search_stores(event):
     params  = event.get("queryStringParameters") or {}
     query   = (params.get("q") or "").strip()
     if not query: return err("Missing ?q=")
-    url = ("https://services.publix.com/api/v1/storelocation"
-           f"?types=G,H,GH,L&numberOfStores=8&includeOpenStoresOnly=false"
-           f"&query={urllib.parse.quote(query)}")
-    try:
-        req = urllib.request.Request(url, headers={"Accept":"application/json","User-Agent":"Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=6) as r:
-            raw = json.loads(r.read().decode())
-    except Exception as e:
-        return err(f"Store search failed: {e}", 502)
-    stores = []
-    for s in (raw if isinstance(raw, list) else raw.get("stores", raw.get("Stores", []))):
-        sid = str(s.get("StoreNumber") or s.get("storeNumber") or s.get("id") or "")
-        if sid:
-            stores.append({
-                "id": sid,
-                "name":    s.get("Name") or s.get("name") or "",
-                "address": s.get("Address") or s.get("address") or "",
-                "city":    s.get("City") or s.get("city") or "",
-                "state":   s.get("State") or s.get("state") or "",
-            })
-    return ok({"stores": stores})
+
+    # Detect query type
+    is_store_num = bool(re.match(r'^\d{3,6}$', query))
+    is_zip       = bool(re.match(r'^\d{5}$', query))
+
+    if is_store_num:
+        # Single store by number — returns GeoJSON with geo+json Accept header
+        url = (f"https://services.publix.com/storelocator/api/v1/stores/"
+               f"?types=R,G,H,N,S&count=1&distance=1000&includeOpenAndCloseDates=true"
+               f"&storeNumber={urllib.parse.quote(query)}&includeStore=true&isWebsite=true")
+        try:
+            raw  = _store_fetch(url)
+            features = raw.get("features", [])
+            stores = [_parse_store_feature(f) for f in features if f.get("properties",{}).get("storeNumber")]
+            return ok({"stores": stores[:1]})
+        except Exception as e:
+            return err(f"Store lookup failed: {e}", 502)
+    else:
+        param = "zip" if is_zip else "city"
+        url = (f"https://services.publix.com/storelocator/api/v1/stores/"
+               f"?types=R,G,H,N,S&count=10&distance=50&includeOpenAndCloseDates=true"
+               f"&{param}={urllib.parse.quote(query)}&isWebsite=true")
+        try:
+            raw = _store_fetch(url)
+        except Exception as e:
+            return err(f"Store search failed: {e}", 502)
+        features = raw.get("features", [])
+        stores = [_parse_store_feature(f) for f in features if f.get("properties",{}).get("storeNumber")]
+        return ok({"stores": stores[:10]})
 
 
 # ── deals ─────────────────────────────────────────────────────────────────────
 
-def _parse_deals(raw: dict) -> list[dict]:
+def _enrich_deal(d: dict) -> dict:
+    """Add computed boolean fields to a deal dict (works on both cached and raw API dicts)."""
+    saving_type = (d.get("saving_type") or d.get("savingType") or "WeeklyAd")
+    brand_lower = (d.get("brand") or "").lower()
+    title_lower = (d.get("title") or "").lower()
+    savings_str = (d.get("savings") or "").lower()
+    categories  = d.get("categories") or []
+    is_publix   = brand_lower == "publix" or title_lower.startswith("publix ")
+    has_coupon  = bool(d.get("has_coupon") or d.get("hasCoupon")) or saving_type in ("PrintableCoupon", "DigitalCoupon")
+    is_stacked  = saving_type == "StackedDeals"
+    is_extra    = saving_type == "ExtraSavings"
+    import re as _re
+    _bogo_text = title_lower + " " + savings_str
+    is_bogo     = (
+        "bogo" in categories
+        or bool(_re.search(r"b[12]g1|buy \d.{0,8}get \d|buy one.{0,10}get one", _bogo_text))
+    )
+    return {**d,
+        "saving_type":     saving_type,
+        "is_bogo":         is_bogo,
+        "categories":      categories,
+        "is_publix_brand": is_publix,
+        "has_coupon":      has_coupon,
+        "is_stacked":      is_stacked,
+        "is_extra":        is_extra,
+    }
+
+
+def _parse_deal(d: dict) -> dict:
+    """Re-enrich a deal that was previously serialised to the DynamoDB cache."""
+    return _enrich_deal(d)
+
+
+def _parse_deals_raw(raw: dict) -> list[dict]:
+    """Parse deals straight from the live Publix savings API response."""
     deals = []
     for d in (raw.get("Savings") or []):
-        saving_type    = (d.get("savingType") or "WeeklyAd")
-        brand_lower    = (d.get("brand") or "").lower()
-        title_lower    = (d.get("title") or "").lower()
-        is_publix      = brand_lower == "publix" or title_lower.startswith("publix ")
-        has_coupon     = bool(d.get("hasCoupon")) or saving_type in ("PrintableCoupon","DigitalCoupon")
-        is_stacked     = saving_type == "StackedDeals"
-        is_extra       = saving_type == "ExtraSavings"
-        deals.append({
-            "id":             str(d.get("id", "")),
-            "title":          d.get("title", ""),
-            "description":    d.get("description", ""),
-            "savings":        d.get("savings", ""),
-            "save_line":      d.get("additionalDealInfo", ""),
-            "fine_print":     d.get("finePrint") or "",
-            "brand":          d.get("brand", ""),
-            "department":     d.get("department", ""),
-            "valid_from":     d.get("wa_startDateFormatted", ""),
-            "valid_thru":     d.get("wa_endDateFormatted", ""),
-            "image_url":      d.get("enhancedImageUrl") or d.get("imageUrl") or "",
-            "saving_type":    saving_type,
-            "is_publix_brand":is_publix,
-            "has_coupon":     has_coupon,
-            "is_stacked":     is_stacked,
-            "is_extra":       is_extra,
-        })
+        saving_type = (d.get("savingType") or "WeeklyAd")
+        base = {
+            "id":          str(d.get("id", "")),
+            "title":       d.get("title", ""),
+            "description": d.get("description", ""),
+            "savings":     d.get("savings", ""),
+            "save_line":   d.get("additionalDealInfo", ""),
+            "fine_print":  d.get("finePrint") or "",
+            "brand":       d.get("brand", ""),
+            "department":  d.get("department", ""),
+            "valid_from":  d.get("wa_startDateFormatted", ""),
+            "valid_thru":  d.get("wa_endDateFormatted", ""),
+            "image_url":   d.get("enhancedImageUrl") or d.get("imageUrl") or "",
+            "saving_type": saving_type,
+            "coupon_id":   str(d.get("dcId")) if d.get("dcId") else "",
+            "categories":  d.get("categories") or [],
+        }
+        deals.append(_enrich_deal(base))
     return deals
+
+
+# Keep old name as alias so the scraper lambda (which imports nothing from here) is unaffected
+def _parse_deals(raw: dict) -> list[dict]:
+    return _parse_deals_raw(raw)
 
 
 def get_deals(event):
@@ -291,42 +499,82 @@ def get_deals(event):
     params   = event.get("queryStringParameters") or {}
     store_id = (params.get("store_id") or "").strip()
     if not store_id: return err("Missing store_id parameter.")
-    try:
-        req = urllib.request.Request(SAVINGS_URL, headers={
+
+    # Prefer the DynamoDB cache written by the weekly scraper
+    deals_table_obj = dynamodb.Table(os.environ["DEALS_TABLE"])
+    cached = deals_table_obj.get_item(Key={"store_id": store_id}).get("Item")
+    if cached:
+        num_chunks = int(cached.get("num_chunks", 0))
+        updated_at = str(cached.get("fetched_at", ""))
+        if num_chunks > 0:
+            raw_deals = []
+            for i in range(num_chunks):
+                chunk_row = deals_table_obj.get_item(Key={"store_id": f"{store_id}#{i}"}).get("Item")
+                if chunk_row:
+                    raw_deals.extend(json.loads(chunk_row.get("deals", "[]")))
+        else:
+            # Legacy single-row format
+            raw_deals = json.loads(cached.get("deals", "[]"))
+        deals = [_parse_deal(d) for d in raw_deals]
+        _log_app_event("cache", "info", hit=True,  store_id=store_id, endpoint="/deals", deal_count=len(deals))
+    else:
+        # No cache yet — fall back to a live fetch so first-time users see data
+        _hdrs = {
             "Accept":      "application/json, text/plain, */*",
             "Origin":      "https://www.publix.com",
             "Referer":     "https://www.publix.com/",
             "publixstore": str(store_id),
             "User-Agent":  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        })
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = json.loads(resp.read().decode())
-    except Exception as e:
-        return err(f"Failed to fetch deals from Publix: {e}", 502)
+        }
+        deals = []
+        seen_ids = set()
+        updated_at = ""
+        for _url in [SAVINGS_URL_WEEKLY, SAVINGS_URL_COUPONS]:
+            try:
+                req = urllib.request.Request(_url, headers=_hdrs)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    raw = json.loads(resp.read().decode())
+                if not updated_at:
+                    updated_at = raw.get("WeeklyAdLatestUpdatedDateTime", "")
+                    _log_app_event("cache", "warn", hit=False, store_id=store_id, endpoint="/deals",
+                                   message="cache miss — live fetch used")
+                for d in _parse_deals_raw(raw):
+                    if d["id"] not in seen_ids:
+                        seen_ids.add(d["id"])
+                        deals.append(d)
+            except Exception as e:
+                if not deals:
+                    _log_app_event("cache", "warn", hit=False, store_id=store_id, endpoint="/deals",
+                                   message=f"Live fetch failed: {e}")
+                    return err(f"No cached deals and live fetch failed: {e}", 502)
 
-    deals = _parse_deals(raw)
     counts = {
         "total":   len(deals),
-        "weekly":  sum(1 for d in deals if d["saving_type"] == "WeeklyAd"),
+        "weekly":  sum(1 for d in deals if d["saving_type"] == "WeeklyAd" and not d.get("is_bogo")),
         "extra":   sum(1 for d in deals if d["is_extra"]),
         "stacked": sum(1 for d in deals if d["is_stacked"]),
         "coupon":  sum(1 for d in deals if d["has_coupon"]),
         "publix":  sum(1 for d in deals if d["is_publix_brand"]),
     }
-    # Per-department counts
-    dept_counts = {}
+
+    dept_counts: dict = {}
     for d in deals:
         dept = (d.get("department") or "Other").strip()
         dept_counts[dept] = dept_counts.get(dept, 0) + 1
 
+    # Unique saving_type values present in this week's data (drives dynamic Savings filter)
+    saving_types = sorted({d["saving_type"] for d in deals if d.get("saving_type")})
+
     return ok({
-        "deals":       deals,
-        "total":       len(deals),
-        "store_id":    store_id,
-        "updated_at":  raw.get("WeeklyAdLatestUpdatedDateTime", ""),
-        "counts":      counts,
-        "dept_counts": dept_counts,
+        "deals":        deals,
+        "total":        len(deals),
+        "store_id":     store_id,
+        "updated_at":   updated_at,
+        "counts":       counts,
+        "dept_counts":  dept_counts,
+        "saving_types": saving_types,
     })
+
 
 
 # ── admin: scrape logs ────────────────────────────────────────────────────────
@@ -389,6 +637,7 @@ def admin_list_users(event):
             items.extend(resp.get("Items", []))
         users = []
         for u in _to_py(items):
+            if u.get("email") == "__meta__": continue
             p = u.get("prefs") or {}
             users.append({
                 "email":        u["email"],
@@ -424,6 +673,15 @@ def admin_delete_user(event, email: str):
     if not get_admin_auth(event): return err("Unauthorized.", 401)
     if not email: return err("Missing email.")
     users_table.delete_item(Key={"email": email})
+    # Track deletion count in metadata record
+    try:
+        users_table.update_item(
+            Key={"email": "__meta__"},
+            UpdateExpression="ADD deleted_count :one SET last_deleted_at = :ts",
+            ExpressionAttributeValues={":one": 1, ":ts": datetime.now(timezone.utc).isoformat()}
+        )
+    except Exception:
+        pass
     return ok({"message": f"User {email} deleted."})
 
 
@@ -477,6 +735,128 @@ def admin_clear_items(event, email: str):
     return ok({"message": f"Items cleared for {email}."})
 
 
+
+def admin_stats(event):
+    if not get_admin_auth(event): return err("Unauthorized.", 401)
+
+    # Scan all users
+    items, resp = [], users_table.scan()
+    items.extend(resp.get("Items", []))
+    while "LastEvaluatedKey" in resp:
+        resp = users_table.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
+        items.extend(resp.get("Items", []))
+    users = [u for u in _to_py(items) if u.get("email") != "__meta__"]
+
+    total = len(users)
+
+    # Users by join date (by month)
+    from collections import Counter, defaultdict
+    by_month = Counter()
+    for u in users:
+        ts = u.get("created_at", "")
+        if ts:
+            by_month[ts[:7]] += 1  # "YYYY-MM"
+
+    # Geography: group by store city/name
+    by_store = Counter()
+    for u in users:
+        p = u.get("prefs") or {}
+        name = p.get("store_name") or ""
+        sid  = p.get("store_id") or ""
+        if name:
+            # Extract city: store names are like "Publix Super Market at Shoppes at XYZ, Asheville, NC"
+            # Try to get last part after last comma as city
+            parts = [x.strip() for x in name.split(",")]
+            city = parts[-2] if len(parts) >= 2 else (parts[-1] if parts else sid or "Unknown")
+            by_store[city] += 1
+        elif sid:
+            by_store[f"Store #{sid}"] += 1
+        else:
+            by_store["No store set"] += 1
+
+    # Average list items
+    item_counts = [len((u.get("prefs") or {}).get("items") or []) for u in users]
+    avg_items = round(sum(item_counts) / total, 1) if total else 0
+
+    # Popular items across all users
+    all_items = Counter()
+    for u in users:
+        p = u.get("prefs") or {}
+        for item in (p.get("items") or []):
+            if item and isinstance(item, str):
+                all_items[item.strip().lower()] += 1
+
+    popular = [{"item": k, "count": v} for k, v in all_items.most_common(25)]
+
+    # Users with no items
+    no_items = sum(1 for c in item_counts if c == 0)
+
+    # Fetch deletion metadata
+    meta = users_table.get_item(Key={"email": "__meta__"}).get("Item") or {}
+    meta = _to_py(meta)
+    deleted_count = int(meta.get("deleted_count", 0))
+
+    return ok({
+        "total_users":     total,
+        "deleted_users":   deleted_count,
+        "avg_items":       avg_items,
+        "no_items_count":  no_items,
+        "by_month":        [{"month": k, "count": v} for k, v in sorted(by_month.items())],
+        "by_geography":    [{"location": k, "count": v} for k, v in by_store.most_common(20)],
+        "popular_items":   popular,
+    })
+
+
+# ── admin: auth logs ─────────────────────────────────────────────────────────
+
+def get_auth_logs(event):
+    if not get_admin_auth(event): return err("Unauthorized.", 401)
+    try:
+        params  = event.get("queryStringParameters") or {}
+        limit   = min(int(params.get("limit", 100)), 500)
+        resp    = auth_logs_tbl.scan(Limit=limit)
+        items   = _to_py(resp.get("Items", []))
+        items.sort(key=lambda x: x.get("ts", ""), reverse=True)
+        return ok({"logs": items[:limit]})
+    except Exception as e:
+        return err(f"Could not fetch auth logs: {e}", 500)
+
+
+# ── admin: app/api logs ───────────────────────────────────────────────────────
+
+def get_app_logs(event):
+    if not get_admin_auth(event): return err("Unauthorized.", 401)
+    try:
+        params  = event.get("queryStringParameters") or {}
+        limit   = min(int(params.get("limit", 100)), 500)
+        resp    = app_logs_tbl.scan(Limit=limit)
+        items   = _to_py(resp.get("Items", []))
+        items.sort(key=lambda x: x.get("ts", ""), reverse=True)
+        return ok({"logs": items[:limit]})
+    except Exception as e:
+        return err(f"Could not fetch app logs: {e}", 500)
+
+
+def log_frontend_error(event, body):
+    """POST /log/error — receive frontend JS error reports."""
+    try:
+        ip  = _get_client_ip(event)
+        now = datetime.now(timezone.utc).isoformat()
+        app_logs_tbl.put_item(Item={
+            "log_id":  f"{now}#{secrets.token_hex(4)}",
+            "ts":      now,
+            "source":  "frontend",
+            "level":   body.get("level", "error"),
+            "message": str(body.get("message", ""))[:500],
+            "stack":   str(body.get("stack", ""))[:1000],
+            "url":     str(body.get("url", ""))[:200],
+            "ip":      ip,
+        })
+        return ok({"message": "Logged."})
+    except Exception as e:
+        return err(f"Log write failed: {e}", 500)
+
+
 # ── router ────────────────────────────────────────────────────────────────────
 
 def handler(event, context):
@@ -490,12 +870,15 @@ def handler(event, context):
 
     # User routes
     if path == "/auth/register"   and method == "POST":   return register(body)
-    if path == "/auth/login"      and method == "POST":   return login(body)
+    if path == "/auth/login"      and method == "POST":
+        body["__event__"] = event
+        return login(body)
     if path == "/auth/logout"     and method == "POST":   return logout(event)
     if path == "/auth/change-pin" and method == "POST":   return change_pin(event, body)
     if path == "/user/prefs"      and method == "GET":    return get_prefs(event)
     if path == "/user/prefs"      and method == "PUT":    return save_prefs(event, body)
     if path == "/user/account"    and method == "DELETE": return delete_account(event)
+    if path == "/user/test-email" and method == "POST":   return send_test_email(event)
     if path == "/stores/search"   and method == "GET":    return search_stores(event)
     if path == "/deals"           and method == "GET":    return get_deals(event)
 
@@ -505,6 +888,10 @@ def handler(event, context):
     if path == "/admin/scrape-logs" and method == "GET":  return get_scrape_logs(event)
     if path == "/admin/scrape-now"  and method == "POST": return invoke_scraper(event)
     if path == "/admin/logs/tail"   and method == "GET":  return get_log_tail(event)
+    if path == "/admin/stats"        and method == "GET":  return admin_stats(event)
+    if path == "/admin/auth-logs"    and method == "GET":  return get_auth_logs(event)
+    if path == "/admin/app-logs"     and method == "GET":  return get_app_logs(event)
+    if path == "/log/error"          and method == "POST": return log_frontend_error(event, body)
 
     # Admin parameterised routes  /admin/users/{email}[/action]
     if path.startswith("/admin/users/"):
@@ -519,9 +906,6 @@ def handler(event, context):
         if action == "prefs"      and method == "PUT":  return admin_patch_prefs(event, body, uemail)
         if action == "items"      and method == "DELETE": return admin_clear_items(event, uemail)
 
-    if path == "/user/test-email" and method == "POST": return send_test_email(event)
-
-    # Debug: echo back auth headers (remove after debugging)
     if path == "/admin/debug" and method == "GET":
         headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
         return ok({
@@ -570,6 +954,12 @@ def send_test_email(event):
   </div>
 </body></html>""",
         })
+        _log_app_event("email", "info", ok=True,
+                       to=notify_email, subject="test-email",
+                       trigger="manual", user=sess["email"])
         return ok({"message": f"Test email sent to {notify_email}."})
     except Exception as e:
+        _log_app_event("email", "error", ok=False,
+                       to=notify_email, subject="test-email",
+                       trigger="manual", user=sess["email"], message=str(e)[:200])
         return err(f"Failed to send email: {e}", 500)

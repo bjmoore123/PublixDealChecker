@@ -348,17 +348,30 @@ def send_alert(notify_email: str, matches: list[dict], store_id: str, store_name
 # ── Lambda handler ────────────────────────────────────────────────────────────
 
 def handler(event, context):
-    """Lambda entry point — called by EventBridge weekly or manually."""
-    # Only send emails when triggered by the EventBridge scheduled rule.
-    # Manual invocations (admin panel, CLI) just scrape and cache without emailing.
-    source = event.get("source", "")
-    detail_type = event.get("detail-type", "")
+    """Lambda entry point — called by EventBridge weekly or manually.
+
+    Supports three invocation modes:
+      1. EventBridge scheduled rule  → scrape + email all users
+      2. Admin manual trigger        → scrape + cache only (no email)
+      3. User resend (source=manual-resend, target_email=<email>)
+                                     → scrape + email that one user only
+    """
+    source       = event.get("source", "")
+    detail_type  = event.get("detail-type", "")
+    target_email = (event.get("target_email") or "").strip().lower()
+
+    # Explicit resend for a single user
+    if source == "manual-resend" and target_email:
+        main(send_emails=True, target_email=target_email)
+        return {"statusCode": 200, "body": "Done (single-user resend)."}
+
+    # Scheduled EventBridge trigger → send to everyone
     send_emails = (source == "aws.events") or (detail_type == "Scheduled Event")
     main(send_emails=send_emails)
     return {"statusCode": 200, "body": "Done."}
 
 
-def main(send_emails: bool = False):
+def main(send_emails: bool = False, target_email: str = ""):
     started_at = datetime.now(timezone.utc)
     print(f"\nPublix Deal Checker — {date.today()}")
     print("=" * 50)
@@ -375,7 +388,11 @@ def main(send_emails: bool = False):
     }
 
     users = get_all_users()
-    print(f"Loaded {len(users)} registered user(s)")
+    if target_email:
+        users = [u for u in users if u.get("email", "").lower() == target_email]
+        print(f"Single-user resend for: {target_email} ({len(users)} found)")
+    else:
+        print(f"Loaded {len(users)} registered user(s)")
     if not users:
         print("No users — nothing to do.")
         job["finished_at"] = datetime.now(timezone.utc).isoformat()

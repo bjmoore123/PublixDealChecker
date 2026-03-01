@@ -59,15 +59,30 @@ function parseSavingsAmount(str) {
   return m ? parseFloat(m[1]) : null;
 }
 
-// For sorting purposes, extract the most meaningful savings number from a deal.
-// save_line (e.g. "Save Up To $10.98 on 2") is more meaningful than the display
-// price when it contains a dollar amount — use it preferentially.
-// For bundle prices like "2 for $25.00" we can't compare to per-item prices, so
-// we leave them at face value (they'll cluster together near the top).
+// Parse "SAVE UP TO $7.39 ON 3" -> per-item equivalent $2.46.
+// Used as a JS-side fallback when savings_per_item is absent from the API response.
+function parseSavingsPerItem(str) {
+  if (!str) return null;
+  const m = str.match(/\$(\d+(?:\.\d+)?)\s+on\s+(\d+)/i);
+  if (!m) return null;
+  const total = parseFloat(m[1]);
+  const qty   = parseInt(m[2], 10);
+  return qty > 0 ? total / qty : total;
+}
+
+// For sorting: items with NO parseable dollar value sort LAST (-Infinity sentinel).
+// Priority: backend savings_per_item > JS-parsed save_line > savings field > -Infinity.
 function dealSortSavings(d) {
+  // Prefer the pre-computed backend value (v9+: deal_parser.py stores this)
+  if (d.savings_per_item != null) return d.savings_per_item;
+  // JS fallback for data scraped before v9 backend
+  const perItem = parseSavingsPerItem(d.save_line);
+  if (perItem !== null) return perItem;
   const fromSaveLine = parseSavingsAmount(d.save_line);
   if (fromSaveLine !== null) return fromSaveLine;
-  return parseSavingsAmount(d.savings) || 0;
+  const fromSavings = parseSavingsAmount(d.savings);
+  if (fromSavings !== null) return fromSavings;
+  return -Infinity; // no value — sort last
 }
 
 function computeBadge(deal, history) {
@@ -180,14 +195,18 @@ async function loadDealHistory() {
 
 async function loadCorpus() {
   if (_corpusTitles.length) return;
-  const cached = sessionStorage.getItem('pdc_corpus');
-  if (cached) { _corpusTitles = JSON.parse(cached); return; }
+  // v2 key: forces all browsers to discard old &amp;-poisoned corpus cache.
+  const CORPUS_KEY = 'pdc_corpus_v2';
+  const cached = sessionStorage.getItem(CORPUS_KEY);
+  // Always decode entities — safety net for any data stored before the Python fix
+  if (cached) { _corpusTitles = JSON.parse(cached).map(decodeEntities); return; }
   try {
     const res = await fetch(API + '/deals/corpus', { headers: { Authorization: 'Bearer ' + token } });
     if (!res.ok) return;
     const data = await res.json();
-    _corpusTitles = data.titles || [];
-    sessionStorage.setItem('pdc_corpus', JSON.stringify(_corpusTitles));
+    // Decode HTML entities as a safety net (Python fix handles new data; this covers transition)
+    _corpusTitles = (data.titles || []).map(decodeEntities);
+    sessionStorage.setItem(CORPUS_KEY, JSON.stringify(_corpusTitles));
   } catch (e) { console.warn('Corpus load failed:', e); }
 }
 
@@ -623,7 +642,7 @@ function selectStore(idx){
 function renderItems(){
   const items=(prefs&&prefs.items)||[];
   document.getElementById('items-ul').innerHTML=items.map((item,i)=>{
-    const name=itemName(item);
+    const name=decodeEntities(itemName(item)); // decode HTML entities stored from API titles
     const mode=itemMode(item);
     return `<li class="item-row">
       <span class="item-name">${escH(name)}<br><span class="item-freq list-item-freq" data-item="${escH(name)}"></span></span>
@@ -637,16 +656,16 @@ function renderItems(){
   renderFreqHints();
 }
 function addItem(){
-  const inp=document.getElementById('new-item');const v=inp.value.trim();
+  const inp=document.getElementById('new-item');const v=decodeEntities(inp.value.trim());
   if(!v) return;if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
-  if(!itemNames().includes(v)){prefs.items.push(itemObj(v,'fuzzy'));renderItems();savePrefs('list').catch(()=>{});}
+  if(!itemNames().includes(v)){prefs.items.push(itemObj(v,'exact'));renderItems();savePrefs('list').catch(()=>{});}
   inp.value='';inp.focus();
 }
 function removeItem(i){if(!prefs||!prefs.items) return;prefs.items.splice(i,1);renderItems();syncDealCheckboxes();savePrefs('list').catch(()=>{});}
 function bulkImport(){
   const lines=document.getElementById('bulk-ta').value.split('\n').map(l=>l.trim()).filter(Boolean);
   if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
-  lines.forEach(l=>{if(!itemNames().includes(l)) prefs.items.push(itemObj(l,'fuzzy'));});
+  lines.forEach(l=>{if(!itemNames().includes(l)) prefs.items.push(itemObj(l,'exact'));});
   renderItems();document.getElementById('bulk-ta').value='';syncDealCheckboxes();
   savePrefs('list').catch(()=>{});
 }
@@ -716,6 +735,26 @@ async function deleteAccount(){
   try{await fetch(API+'/user/account',{method:'DELETE',headers:{'Authorization':'Bearer '+token}});}catch(_){}
   doLogout();
 }
+async function resendWeeklyEmail(){
+  const btn=document.getElementById('btn-resend-weekly');
+  if(btn){btn.disabled=true;btn.textContent='Queuing…';}
+  try{
+    const res=await fetch(API+'/user/resend-weekly',{method:'POST',headers:{'Authorization':'Bearer '+token}});
+    const d=await res.json();
+    if(res.ok){
+      // Accurate timing: Lambda cold start + scrape + email delivery = 1–2 min realistically
+      setMsg('test-email-msg',d.message||'Email queued — check your inbox in a few minutes.','ok');
+      if(btn){btn.textContent='✓ Queued';setTimeout(()=>{btn.textContent='🛒 Resend This Week\'s Deals';btn.disabled=false;},4000);}
+    } else {
+      setMsg('test-email-msg',d.error||'Failed to queue email.','err');
+      if(btn){btn.disabled=false;btn.textContent='🛒 Resend This Week\'s Deals';}
+    }
+  }catch(e){
+    setMsg('test-email-msg','Network error.','err');
+    if(btn){btn.disabled=false;btn.textContent='🛒 Resend This Week\'s Deals';}
+  }
+}
+
 async function sendTestEmail(){
   const btn=document.getElementById('btn-test-email');
   const msgEl=document.getElementById('test-email-msg');
@@ -800,7 +839,18 @@ async function loadDeals(forceRefresh=false){
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed to load deals');
 
-    _allDeals     = data.deals||[];
+    // Decode HTML entities from API data at the source so all downstream
+    // rendering (autocomplete, cards, modals) gets clean strings
+    _allDeals     = (data.deals||[]).map(d => ({
+      ...d,
+      title:       decodeEntities(d.title       || ''),
+      description: decodeEntities(d.description || ''),
+      save_line:   decodeEntities(d.save_line   || ''),
+      savings:     decodeEntities(d.savings     || ''),
+      fine_print:  decodeEntities(d.fine_print  || ''),
+      department:  decodeEntities(d.department  || ''),
+      brand:       decodeEntities(d.brand       || ''),
+    }));
     _dealCounts   = data.counts||{};
     _deptCounts   = data.dept_counts||{};
     _dealsUpdated = data.updated_at||'';
@@ -897,7 +947,14 @@ function applySortOrder(arr, sortVal) {
   } else if (sortVal === 'name-za') {
     a.sort((x,y) => (y.title||'').localeCompare(x.title||''));
   } else if (sortVal === 'savings-desc') {
-    a.sort((x,y) => dealSortSavings(y) - dealSortSavings(x));
+    // Items with no parseable savings value (-Infinity) always sort last
+    a.sort((x,y) => {
+      const sx = dealSortSavings(x), sy = dealSortSavings(y);
+      if (!isFinite(sx) && !isFinite(sy)) return 0;
+      if (!isFinite(sx)) return 1;
+      if (!isFinite(sy)) return -1;
+      return sy - sx;
+    });
   } else if (sortVal === 'score-desc') {
     a.sort((x,y) => (y.match_score||0) - (x.match_score||0));
   }
@@ -965,7 +1022,12 @@ function dealTypeTag(d) {
 // isn't confused into thinking a $15 bottle of wine costs $0.99.
 function savingsDisplay(d) {
   const s = decodeEntities(d.savings || '');
-  if (!s) return '';
+  // BOGO deals with no dollar amount in the savings string: show a clear label
+  // instead of an empty badge. isBogo() is defined later but works here due to hoisting.
+  if (!s || s.trim() === '') {
+    if (d.is_bogo) return { text: 'Buy 1 Get 1 Free', isDiscount: true };
+    return '';
+  }
   const isDiscount = d.saving_type === 'ExtraSavings' ||
                      d.saving_type === 'StackedDeals'  ||
                      d.is_extra;
@@ -1426,6 +1488,25 @@ function onMatchFilter(changed){
   renderMatches();
 }
 
+
+// Add a match card's title to My List as an exact match (user explicitly chose this item)
+function addMatchToList(title, btn) {
+  const clean = decodeEntities(title);
+  if (!prefs) prefs = {};
+  if (!prefs.items) prefs.items = [];
+  if (itemNames().map(n => n.toLowerCase()).includes(clean.toLowerCase())) {
+    btn.textContent = '✓ On list';
+    btn.disabled = true;
+    return;
+  }
+  prefs.items.push(itemObj(clean, 'exact'));
+  renderItems();
+  syncDealCheckboxes();
+  savePrefs('list').catch(() => {});
+  btn.textContent = '✓ Added!';
+  btn.style.color = 'var(--green)';
+  btn.disabled = true;
+}
 function renderMatches(){
   const q     =(document.getElementById('matches-q').value||'').toLowerCase();
   const mfAll =document.getElementById('mf-all').checked;
@@ -1513,6 +1594,13 @@ function renderMatches(){
           return ` · ${m}/${tT.length} title words`;
         })()}</div>
         ${d.has_coupon?`<a class="btn-clip" href="https://www.publix.com/savings/digital-coupons${d.coupon_id?'?cid='+d.coupon_id:''}" target="_blank" rel="noopener">✂️ Clip Coupon</a>`:''}
+        ${(()=>{
+          const clean=decodeEntities(d.title);
+          const onList=itemNames().map(n=>n.toLowerCase()).includes(clean.toLowerCase());
+          return `<button class="btn-add-to-list${onList?' on-list':''}" onclick="event.stopPropagation();addMatchToList('${escH(d.title)}',this)" ${onList?'disabled':''}>
+            ${onList?'✓ On list':'+ Add to List'}
+          </button>`;
+        })()}
       </div></div>`;
   }).join('');
 }
@@ -1659,11 +1747,26 @@ function adminRenderInboundLogs(senderFilter){
 
 function adminSignOut(){
   adminKey=null;
+  _adminDataLoaded = false;  // allow re-fetch on next login
   sessionStorage.removeItem('pdc_admin');
   document.getElementById('admin-dash').style.display='none';
   document.getElementById('admin-login-sec').style.display='';
   document.getElementById('admin-secret-inp').value='';
   setMsg('admin-login-msg','','');
+}
+
+// Called once per admin login (fresh login OR restored session) — not on every page visit.
+// Pre-fetches all log panels so every tab is ready without a manual Refresh click.
+// Reset _adminDataLoaded to false on adminSignOut() so next login re-fetches fresh data.
+let _adminDataLoaded = false;
+async function adminPostLogin() {
+  if (_adminDataLoaded) return;
+  _adminDataLoaded = true;
+  // Fire all fetches in parallel — each populates its own panel independently
+  adminLoadLogs();      // Logging tab: scrape jobs
+  adminLoadStats();     // Reports tab
+  adminLoadAuthLogs();  // Users tab: authentication log
+  adminLoadAppLogs();   // Logging tab: application logs
 }
 async function initAdmin(){
   if(adminKey){
@@ -1678,6 +1781,7 @@ async function initAdmin(){
     document.getElementById('admin-login-sec').style.display='none';
     document.getElementById('admin-dash').style.display='block';
     adminLoadUsers();  // other tabs load lazily
+    adminPostLogin();  // one-time log refresh on session restore
   }
 }
 async function adminLogin(){
@@ -1697,6 +1801,7 @@ async function adminLogin(){
       // only 401 means wrong password
     }
     adminKey=s;sessionStorage.setItem('pdc_admin',s);
+    adminPostLogin();
     document.getElementById('admin-login-sec').style.display='none';
     document.getElementById('admin-dash').style.display='block';
     adminLoadUsers();  // other tabs load lazily
@@ -2158,11 +2263,13 @@ async function adminLoadCacheStats(){
 
 // ── Frontend error reporting ───────────────────────────────────────────────────
 window.onerror = function(msg, src, line, col, err){
-  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(token||'')},
+  if(!token) return; // skip silently — /log/error requires auth (PDC-11)
+  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
     body:JSON.stringify({level:'error',message:String(msg),stack:err&&err.stack||'',url:src+'#L'+line+':'+col})});}catch(_){}
 };
 window.onunhandledrejection = function(e){
-  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(token||'')},
+  if(!token) return; // skip silently — /log/error requires auth (PDC-11)
+  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
     body:JSON.stringify({level:'error',message:'Unhandled rejection: '+String(e.reason),stack:e.reason&&e.reason.stack||'',url:window.location.href})});}catch(_){}
 };
 
@@ -2259,7 +2366,7 @@ function acGetTitles() {
   // Exclude items already on the list
   const alreadyAdded = new Set(itemNames().map(n => n.toLowerCase()));
   for (const t of allSources) {
-    const trimmed = t.trim();
+    const trimmed = t.trim(); // entities already decoded at load time in loadCorpus / _allDeals
     if (trimmed && !seen.has(trimmed.toLowerCase()) && !alreadyAdded.has(trimmed.toLowerCase())) {
       seen.add(trimmed.toLowerCase());
       titles.push(trimmed);
@@ -2328,7 +2435,7 @@ function acKeydown(e) {
 }
 
 function acSelect(val) {
-  document.getElementById('new-item').value = val;
+  document.getElementById('new-item').value = decodeEntities(val);
   acHide();
   addItem();
 }

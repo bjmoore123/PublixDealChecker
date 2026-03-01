@@ -10,7 +10,7 @@ import urllib.parse
 from helpers import ok, err, get_body, CORS
 
 from auth     import register, login, logout, change_pin
-from prefs    import get_prefs, save_prefs, delete_account, unsubscribe, send_test_email
+from prefs    import get_prefs, save_prefs, delete_account, unsubscribe, send_test_email, resend_weekly_email
 from deals    import get_deals, search_stores, get_deal_history, get_deal_corpus
 from logging_utils import log_frontend_error
 from inbound  import inbound_email_list
@@ -43,6 +43,7 @@ def handler(event, context):
     if path == "/user/account"     and method == "DELETE": return delete_account(event)
     if path == "/user/unsubscribe" and method in ("GET", "POST"): return unsubscribe(event)
     if path == "/user/test-email"  and method == "POST":   return send_test_email(event)
+    if path == "/user/resend-weekly" and method == "POST":  return resend_weekly_email(event)
 
     if path == "/stores/search"    and method == "GET":    return search_stores(event)
     if path == "/deals"            and method == "GET":    return get_deals(event)

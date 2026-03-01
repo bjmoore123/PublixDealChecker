@@ -236,3 +236,43 @@ def send_test_email(event):
                        trigger="manual", user=sess["email"], message=str(e)[:200])
         print(f"[PDC] send_test_email: {e}")
         return err("Failed to send email.", 500)
+
+
+def resend_weekly_email(event):
+    """POST /user/resend-weekly — re-trigger the scraper for just this user's email."""
+    sess = get_session(event)
+    if not sess: return err("Not authenticated.", 401)
+    user = users_table.get_item(Key={"email": sess["email"]}).get("Item")
+    if not user: return err("User not found.", 404)
+
+    prefs     = _to_py(user.get("prefs", DEFAULT_PREFS))
+    store_id  = prefs.get("store_id", "")
+    if not store_id:
+        return err("No store selected. Please choose a store first.")
+    if not prefs.get("email_enabled", True):
+        return err("Email alerts are disabled. Enable them in Notifications first.")
+
+    notify_email = (prefs.get("notify_email") or sess["email"]).strip()
+    scraper_fn   = os.environ.get("SCRAPER_FUNCTION", "")
+    if not scraper_fn:
+        return err("Scraper function not configured.", 500)
+
+    import json as _json
+    try:
+        from helpers import lambda_client
+        payload = _json.dumps({
+            "source":       "manual-resend",
+            "send_emails":  True,
+            "target_email": sess["email"],
+        }).encode()
+        lambda_client.invoke(
+            FunctionName  = scraper_fn,
+            InvocationType= "Event",   # async — don't wait
+            Payload       = payload,
+        )
+        _log_app_event("email", "info", action="resend-weekly-triggered",
+                       user=sess["email"], notify_email=notify_email, store_id=store_id)
+        return ok({"message": f"Weekly deals email queued for {notify_email}. It will arrive within a few minutes."})
+    except Exception as e:
+        print(f"[PDC] resend_weekly_email invoke: {e}")
+        return err("Failed to trigger email.", 500)

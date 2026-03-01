@@ -438,6 +438,28 @@ MSYS_NO_PATHCONV=1 aws s3 cp index_deploy_tmp.html \
 MSYS_NO_PATHCONV=1 aws s3 cp app_deploy_tmp.js \
   "s3://${S3_FRONTEND}/app.js" \
   --content-type "application/javascript" --cache-control "no-cache, no-store, must-revalidate" --no-progress
+
+# Verify uploads succeeded by comparing local MD5 to S3 ETag
+# S3 ETag for non-multipart uploads equals the MD5 of the uploaded bytes
+python3 -c "
+import hashlib, subprocess, sys
+files = [('index_deploy_tmp.html','index.html'), ('app_deploy_tmp.js','app.js')]
+ok = True
+for local, key in files:
+    local_md5 = hashlib.md5(open(local,'rb').read()).hexdigest()
+    result = subprocess.run(
+        ['aws','s3api','head-object','--bucket','${S3_FRONTEND}','--key',key,'--query','ETag','--output','text'],
+        capture_output=True, text=True
+    )
+    remote_etag = result.stdout.strip().strip('\"')
+    if local_md5 == remote_etag:
+        print(f'  ✓ {key} upload verified ({local_md5[:8]}…)')
+    else:
+        print(f'  ✗ WARNING: {key} ETag mismatch — local {local_md5[:8]}… != remote {remote_etag[:8]}…', file=sys.stderr)
+        ok = False
+if not ok:
+    print('  Re-run deploy.sh if frontend changes are not visible after a hard refresh.', file=sys.stderr)
+"
 rm -f index_deploy_tmp.html app_deploy_tmp.js
 FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
 ok "Frontend deployed: ${FRONTEND_URL}"

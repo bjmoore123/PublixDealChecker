@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-#  teardown.sh — Publix Deal Checker v4
+#  teardown.sh — Publix Deal Checker v6
 #  Removes all AWS resources.
 #
 #  By default, DynamoDB tables (and all user data) are PRESERVED.
-#  Pass --delete-data to also drop all four DynamoDB tables.
+#  Pass --delete-data to also drop all DynamoDB tables.
 #
 #  Usage:
 #    bash teardown.sh                  # keeps DynamoDB data
@@ -27,7 +27,7 @@ keep() { echo "   ✦ Preserved: $*"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   Publix Deal Checker v4 — Teardown                  ║"
+echo "║   Publix Deal Checker v8 — Teardown                  ║"
 if [ "$DELETE_DATA" = "true" ]; then
 echo "║   ⚠️  --delete-data: DynamoDB tables WILL be deleted  ║"
 else
@@ -63,12 +63,24 @@ aws iam delete-role-policy --role-name "${ROLE}" --policy-name "${APP_NAME}-lamb
 aws iam delete-role        --role-name "${ROLE}" > /dev/null 2>&1 && ok "IAM role" || skip "IAM role"
 
 echo "▶  DynamoDB tables"
+# All tables — deal-history and deal-corpus are included in the preserved set by default
+ALL_TABLES=(
+  "${APP_NAME}-users"
+  "${APP_NAME}-sessions"
+  "${APP_NAME}-deals"
+  "${APP_NAME}-scrape-logs"
+  "${APP_NAME}-auth-logs"
+  "${APP_NAME}-app-logs"
+  "${APP_NAME}-deal-history"
+  "${APP_NAME}-deal-corpus"
+)
+
 if [ "$DELETE_DATA" = "true" ]; then
-  for tbl in "${APP_NAME}-users" "${APP_NAME}-sessions" "${APP_NAME}-deals" "${APP_NAME}-scrape-logs"; do
+  for tbl in "${ALL_TABLES[@]}"; do
     aws dynamodb delete-table --table-name "${tbl}" --region "${AWS_REGION}" > /dev/null 2>&1 && ok "DynamoDB: ${tbl}" || skip "DynamoDB: ${tbl}"
   done
 else
-  for tbl in "${APP_NAME}-users" "${APP_NAME}-sessions" "${APP_NAME}-deals" "${APP_NAME}-scrape-logs"; do
+  for tbl in "${ALL_TABLES[@]}"; do
     keep "DynamoDB: ${tbl}"
   done
   echo "   → Re-run with --delete-data to remove all DynamoDB tables and user data."

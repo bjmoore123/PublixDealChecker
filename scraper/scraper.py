@@ -1,5 +1,5 @@
 """
-scraper/scraper.py  (v5 - serverless)
+scraper/scraper.py  (v8 - serverless)
 
 Fetches all current deals for a Publix store via the
 services.publix.com/api/v4/savings REST endpoint.
@@ -12,6 +12,8 @@ KEY: `publixstore` must be sent as a REQUEST HEADER, not a query param.
 
 import json
 import urllib.request
+
+from shared.deal_parser import parse_deal
 
 _BASE_URL = (
     "https://services.publix.com/api/v4/savings"
@@ -43,59 +45,31 @@ def _fetch(url: str, store_id: str) -> dict:
         return json.loads(resp.read().decode())
 
 
-def _parse_item(d: dict) -> dict:
-    saving_type = d.get("savingType", "")
-    categories  = d.get("categories") or []
-    title_lower = (d.get("title") or "").lower()
-    savings_str = (d.get("savings") or "").lower()
-    is_bogo = (
-        "bogo" in categories
-        or "buy 1 get 1" in savings_str
-        or "buy one" in savings_str and "get one" in savings_str
-        or "b1g1" in savings_str
-        or "b1g1" in title_lower
-    )
-    return {
-        "id":          str(d.get("id", "")),
-        "title":       d.get("title", ""),
-        "description": d.get("description", ""),
-        "savings":     d.get("savings", ""),
-        "save_line":   d.get("additionalDealInfo", ""),
-        "fine_print":  d.get("finePrint") or "",
-        "brand":       d.get("brand", ""),
-        "department":  d.get("department", ""),
-        "valid_from":  d.get("wa_startDateFormatted", ""),
-        "valid_thru":  d.get("wa_endDateFormatted", ""),
-        "image_url":   d.get("enhancedImageUrl") or d.get("imageUrl") or "",
-        "saving_type": saving_type,
-        "categories":  categories,
-        "is_bogo":     is_bogo,
-        "coupon_id":   str(d.get("dcId")) if d.get("dcId") else "",
-        "on_sale":     True,
-    }
+def get_deals(store_id: str) -> list:
+    """Fetch and merge Weekly Ad + Digital Coupon deals for a store.
 
-
-def get_deals(store_id: str) -> list[dict]:
-    """Fetch and merge Weekly Ad + Digital Coupon deals for a store."""
+    Architecture #2: uses shared.deal_parser.parse_deal — comprehensive BOGO
+    regex replaces old substring-match logic; output shape is identical.
+    """
     seen_ids = set()
-    deals = []
+    deals    = []
 
-    # 1. Weekly Ad (BOGOs, regular sales, extra savings) — requires header-based store ID
+    # 1. Weekly Ad (BOGOs, regular sales, extra savings)
     try:
         raw_wa = _fetch(SAVINGS_URL_WEEKLY, store_id)
         for d in (raw_wa.get("Savings") or []):
-            item = _parse_item(d)
+            item = parse_deal(d)
             if item["id"] and item["id"] not in seen_ids:
                 seen_ids.add(item["id"])
                 deals.append(item)
     except Exception as e:
         print(f"  Warning: Weekly Ad fetch failed for store {store_id}: {e}")
 
-    # 2. Digital Coupons (separate pool — also requires header)
+    # 2. Digital Coupons (separate pool)
     try:
         raw_dc = _fetch(SAVINGS_URL_COUPONS, store_id)
         for d in (raw_dc.get("Savings") or []):
-            item = _parse_item(d)
+            item = parse_deal(d)
             if item["id"] and item["id"] not in seen_ids:
                 seen_ids.add(item["id"])
                 deals.append(item)

@@ -1,16 +1,22 @@
 """
-scraper/main.py  (v4 - serverless Lambda)
+scraper/main.py  (v6 - serverless Lambda)
 
 Lambda entry point. Triggered by EventBridge weekly.
 Writes a scrape-job summary record to DynamoDB after each run.
 Uses per-user notify_email for alert delivery.
+
+v6 additions:
+  - history_deals()  — writes a dated weekly snapshot to deal-history table
+  - update_corpus()  — merges deal titles/brands into global corpus for autocomplete
 """
 
 import json
 import os
 import boto3
+import hmac
+import hashlib
 import resend
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 
 from scraper import get_deals
@@ -22,9 +28,13 @@ AWS_REGION      = os.environ.get("PDC_REGION", os.environ.get("AWS_REGION", "us-
 USERS_TABLE     = os.environ["USERS_TABLE"]
 DEALS_TABLE     = os.environ["DEALS_TABLE"]
 SCRAPE_LOGS_TBL = os.environ.get("SCRAPE_LOGS_TABLE", "publix-deal-checker-scrape-logs")
+HISTORY_TABLE   = os.environ.get("HISTORY_TABLE", "")
+CORPUS_TABLE    = os.environ.get("CORPUS_TABLE", "")
 
 resend.api_key  = os.environ["RESEND_API_KEY"]
 FRONTEND_URL    = os.environ.get("FRONTEND_URL", "")
+API_URL         = os.environ.get("API_URL", "")        # base URL for unsubscribe endpoint
+UNSUB_SECRET    = (os.environ.get("UNSUB_SECRET", "") or "").strip()
 RESEND_FROM    = (
     f"{os.environ.get('RESEND_FROM_NAME','Publix Alerts')} "
     f"<{os.environ.get('RESEND_FROM_ADDR','onboarding@resend.dev')}>"
@@ -85,6 +95,7 @@ CHUNK_SIZE = 200  # deals per DynamoDB row (~200 rows * ~200 bytes = ~40KB per c
 
 def cache_deals(store_id: str, deals: list[dict]):
     fetched_at = datetime.now(timezone.utc).isoformat()
+    ttl_epoch  = int((datetime.now(timezone.utc) + timedelta(days=10)).timestamp())
     chunks = [deals[i:i+CHUNK_SIZE] for i in range(0, max(len(deals), 1), CHUNK_SIZE)]
     num_chunks = len(chunks)
 
@@ -97,6 +108,7 @@ def cache_deals(store_id: str, deals: list[dict]):
             "count":       len(chunk),
             "num_chunks":  num_chunks,
             "chunk_index": i,
+            "expires_at":  ttl_epoch,
         })
 
     # Write an index row at store_id (no deals, just metadata)
@@ -105,39 +117,173 @@ def cache_deals(store_id: str, deals: list[dict]):
         "fetched_at": fetched_at,
         "count":      len(deals),
         "num_chunks": num_chunks,
+        "expires_at": ttl_epoch,
     })
 
 
-def write_scrape_log(log: dict):
-    """Persist scrape job summary to DynamoDB."""
+def _week_start(deals: list[dict]) -> str:
+    """
+    Derive the Monday of the current ad week from the first deal's valid_from date.
+    Falls back to the Monday of today if no valid_from is present or parseable.
+    """
+    for d in deals:
+        vf = d.get("valid_from", "")
+        if vf:
+            try:
+                # valid_from may be "Jan 23, 2026" or "2026-01-23" — try both
+                for fmt in ("%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"):
+                    try:
+                        dt = datetime.strptime(vf.strip(), fmt)
+                        # Roll back to Monday
+                        monday = dt - timedelta(days=dt.weekday())
+                        return monday.strftime("%Y-%m-%d")
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+    # Fallback: Monday of current week
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    return monday.strftime("%Y-%m-%d")
+
+
+def _slim_deal(d: dict) -> dict:
+    """Return a lightweight deal shape for history storage (strips large fields)."""
+    return {
+        "id":          d.get("id", ""),
+        "title":       d.get("title", ""),
+        "savings":     d.get("savings", ""),
+        "saving_type": d.get("saving_type", ""),
+        "is_bogo":     d.get("is_bogo", False),
+        "department":  d.get("department", ""),
+        "brand":       d.get("brand", ""),
+    }
+
+
+def history_deals(store_id: str, deals: list[dict], week_start: str):
+    """
+    Write a weekly snapshot of deals to the deal-history table.
+    Key pattern: store_id#YYYY-MM-DD (index row) + store_id#YYYY-MM-DD#0, #1... (chunks)
+    TTL: 52 weeks from now.
+    """
+    if not HISTORY_TABLE:
+        return
+
+    history_tbl = dynamodb.Table(HISTORY_TABLE)
+    slim_deals  = [_slim_deal(d) for d in deals]
+    fetched_at  = datetime.now(timezone.utc).isoformat()
+    ttl_epoch   = int((datetime.now(timezone.utc) + timedelta(weeks=52)).timestamp())
+    base_key    = f"{store_id}#{week_start}"
+
+    chunks     = [slim_deals[i:i+CHUNK_SIZE] for i in range(0, max(len(slim_deals), 1), CHUNK_SIZE)]
+    num_chunks = len(chunks)
+
+    for i, chunk in enumerate(chunks):
+        history_tbl.put_item(Item={
+            "store_id":    f"{base_key}#{i}",
+            "fetched_at":  fetched_at,
+            "deals":       json.dumps(chunk),
+            "count":       len(chunk),
+            "num_chunks":  num_chunks,
+            "chunk_index": i,
+            "expires_at":  ttl_epoch,
+        })
+
+    # Index row — no deals, just metadata
+    history_tbl.put_item(Item={
+        "store_id":   base_key,
+        "week":       week_start,
+        "fetched_at": fetched_at,
+        "count":      len(slim_deals),
+        "num_chunks": num_chunks,
+        "expires_at": ttl_epoch,
+    })
+
+    print(f"  History snapshot written: {base_key} ({len(slim_deals)} deals, {num_chunks} chunk(s))")
+
+
+def update_corpus(deals: list[dict]):
+    """
+    Merge deal titles and brand strings from this week's deals into the
+    global corpus row (key="global") using DynamoDB ADD on a StringSet.
+    The corpus feeds the List tab autocomplete with cross-week deal names.
+    No TTL — corpus grows indefinitely, never shrinks.
+    """
+    if not CORPUS_TABLE:
+        return
+
+    corpus_tbl = dynamodb.Table(CORPUS_TABLE)
+
+    # Collect all non-empty titles and brands
+    new_terms = set()
+    for d in deals:
+        title = (d.get("title") or "").strip()
+        brand = (d.get("brand") or "").strip()
+        if title:
+            new_terms.add(title)
+        if brand:
+            new_terms.add(brand)
+
+    if not new_terms:
+        return
+
     try:
+        corpus_tbl.update_item(
+            Key={"corpus_id": "global"},
+            UpdateExpression="ADD terms :t SET updated_at = :u",
+            ExpressionAttributeValues={
+                ":t": new_terms,
+                ":u": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        print(f"  Corpus updated: {len(new_terms)} term(s) merged")
+    except Exception as e:
+        print(f"  WARNING: corpus update failed: {e}")
+
+
+def write_scrape_log(log: dict):
+    """Persist scrape job summary to DynamoDB with a 1-year TTL."""
+    try:
+        log["expires_at"] = int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp())
         scrape_logs_tbl.put_item(Item=log)
     except Exception as e:
-        print(f"  WARNING: Could not write scrape log: {e}")
+        print(f"WARNING: failed to write scrape log: {e}")
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
 
-def build_html(matches: list[dict], store_id: str, store_name: str, frontend_url: str = "") -> str:
+def _unsub_token(email: str) -> str:
+    """HMAC-SHA256 of email — matches api.py logic. Returns hex string."""
+    return hmac.new(
+        UNSUB_SECRET.encode(),
+        email.lower().strip().encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+def _unsub_url(account_email: str) -> str:
+    """Build the full unsubscribe URL for a given account email."""
+    if not UNSUB_SECRET or not API_URL:
+        return ""
+    import urllib.parse
+    token = _unsub_token(account_email)
+    params = urllib.parse.urlencode({"email": account_email, "token": token})
+    return f"{API_URL}/user/unsubscribe?{params}"
+
+def build_html(matches, store_id, store_name, frontend_url="", account_email=""):
     today = date.today().strftime("%B %d, %Y")
     rows  = ""
     for m in matches:
-        img = (f'<img src="{m["image_url"]}" width="56" height="56" '
-               f'style="object-fit:contain;border-radius:4px;border:1px solid #eee;" alt="">'
-               if m.get("image_url") else "")
         valid = ""
         if m.get("valid_from") or m.get("valid_thru"):
-            valid = f'<div style="font-size:11px;color:#888;">Valid {m.get("valid_from","")}–{m.get("valid_thru","")}</div>'
+            valid = f'<div style="font-size:11px;color:#999;">Valid {m.get("valid_from","")}–{m.get("valid_thru","")}</div>'
         coupon_link = ""
-        if m.get("has_coupon"):
-            cid = m.get("coupon_id", "")
-            coupon_url = f"https://www.publix.com/savings/digital-coupons{f'?cid={cid}' if cid else ''}"
-            coupon_link = f'<div style="margin-top:4px;"><a href="{coupon_url}" style="font-size:11px;font-weight:700;color:#6b21a8;text-decoration:none;border:1px solid #6b21a8;border-radius:4px;padding:2px 7px;">✂️ Clip Coupon</a></div>'
+        if m.get("coupon_id"):
+            coupon_link = f'<div><a href="https://www.publix.com/savings/digital-coupons?cid={m["coupon_id"]}" style="font-size:11px;color:#8b5cf6;">✂️ Clip Coupon</a></div>'
         rows += f"""
         <tr style="border-bottom:1px solid #eee;">
-          <td style="padding:10px 8px;width:64px;">{img}</td>
+          <td style="padding:10px 8px;width:40px;text-align:center;font-size:22px;">🛒</td>
           <td style="padding:10px 8px;">
-            <div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:2px;">{m.get('my_item','')}</div>
+            <div style="font-size:10px;font-weight:700;color:#1a6b3c;text-transform:uppercase;letter-spacing:.07em;margin-bottom:2px;">{m.get('my_item','')}</div>
             <div style="font-weight:600;">{m['deal_name']}</div>
             {f'<div style="font-size:12px;color:#555;">{m["description"]}</div>' if m.get('description') else ''}
             {f'<div style="font-size:11px;color:#999;">{m["fine_print"]}</div>' if m.get('fine_print') else ''}
@@ -149,6 +295,14 @@ def build_html(matches: list[dict], store_id: str, store_name: str, frontend_url
             {f'<div style="font-size:12px;color:#e76f51;">{m["save_line"]}</div>' if m.get('save_line') else ''}
           </td>
         </tr>"""
+
+    unsub_url = _unsub_url(account_email) if account_email else ""
+    unsub_section = (
+        f'<div style="margin-top:8px;font-size:12px;color:#aaa;">'
+        f'Don\'t want these alerts? '
+        f'<a href="{unsub_url}" style="color:#aaa;">Unsubscribe</a>'
+        f'</div>'
+    ) if unsub_url else ""
 
     return f"""<html><body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#333;">
       <div style="background:#1a6b3c;color:white;padding:20px 24px;border-radius:8px 8px 0 0;">
@@ -168,6 +322,7 @@ def build_html(matches: list[dict], store_id: str, store_name: str, frontend_url
            style="background:#1a6b3c;color:white;padding:10px 24px;border-radius:4px;text-decoration:none;font-weight:600;">
           View My Matches &#x2197;
         </a>
+        {unsub_section}
       </div>
     </body></html>"""
 
@@ -181,7 +336,7 @@ def send_alert(notify_email: str, matches: list[dict], store_id: str, store_name
             "from":    RESEND_FROM,
             "to":      [notify_email],
             "subject": subject,
-            "html":    build_html(matches, store_id, store_name, FRONTEND_URL),
+            "html":    build_html(matches, store_id, store_name, FRONTEND_URL, account_email=account_email),
         })
         _log_email(notify_email, subject, ok=True, user=account_email)
         print(f"   Email sent → {notify_email}")
@@ -205,7 +360,7 @@ def handler(event, context):
 
 def main(send_emails: bool = False):
     started_at = datetime.now(timezone.utc)
-    print(f"\nPublix Deal Checker \u2014 {date.today()}")
+    print(f"\nPublix Deal Checker — {date.today()}")
     print("=" * 50)
 
     job = {
@@ -222,21 +377,20 @@ def main(send_emails: bool = False):
     users = get_all_users()
     print(f"Loaded {len(users)} registered user(s)")
     if not users:
-        print("No users \u2014 nothing to do.")
+        print("No users — nothing to do.")
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
         write_scrape_log(job)
         return
 
-    by_store: dict[str, list] = {}
-    for user in users:
-        store_id = str((user.get("prefs") or {}).get("store_id") or "").strip()
-        if not store_id:
-            print(f"  Skipping {user['email']} \u2014 no store configured")
-            continue
-        by_store.setdefault(store_id, []).append(user)
+    # Group users by store so we only fetch each store's deals once
+    by_store: dict[str, list[dict]] = {}
+    for u in users:
+        sid = (u.get("prefs") or {}).get("store_id", "")
+        if sid:
+            by_store.setdefault(sid, []).append(u)
 
     if not by_store:
-        print("No users have a store configured.")
+        print("No users have a store selected — nothing to do.")
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
         write_scrape_log(job)
         return
@@ -248,7 +402,7 @@ def main(send_emails: bool = False):
         prefs0     = store_users[0].get("prefs") or {}
         store_name = prefs0.get("store_name") or ""
         store_info = {"store_id": store_id, "store_name": store_name, "deals": 0, "emails": 0}
-        print(f"\u25b6 {store_name or f'Store #{store_id}'}")
+        print(f"▶ {store_name or f'Store #{store_id}'}")
 
         try:
             deals = get_deals(store_id)
@@ -266,6 +420,20 @@ def main(send_emails: bool = False):
             print(f"  Deals cached to DynamoDB")
         except Exception as e:
             job["errors"].append(f"WARNING: cache failed for {store_id}: {e}")
+
+        # ── v6: write history snapshot and update corpus ──────────────────────
+        try:
+            week_start = _week_start(deals)
+            history_deals(store_id, deals, week_start)
+        except Exception as e:
+            print(f"  WARNING: history write failed for {store_id}: {e}")
+            job["errors"].append(f"WARNING: history write failed for {store_id}: {e}")
+
+        try:
+            update_corpus(deals)
+        except Exception as e:
+            print(f"  WARNING: corpus update failed: {e}")
+        # ─────────────────────────────────────────────────────────────────────
 
         for user in store_users:
             account_email = user["email"]
@@ -307,13 +475,4 @@ def main(send_emails: bool = False):
     job["finished_at"] = datetime.now(timezone.utc).isoformat()
     write_scrape_log(job)
     mode = "scheduled (emails sent)" if send_emails else "manual (no emails)"
-    print(f"\nDone. [{mode}]")
-
-
-if __name__ == "__main__":
-    os.environ.setdefault("USERS_TABLE", "publix-deal-checker-users")
-    os.environ.setdefault("DEALS_TABLE", "publix-deal-checker-deals")
-    os.environ.setdefault("RESEND_API_KEY", "test")
-    os.environ.setdefault("RESEND_FROM_NAME", "Publix Alerts")
-    os.environ.setdefault("RESEND_FROM_ADDR", "onboarding@resend.dev")
-    main()
+    print(f"\nDone. Mode: {mode}. Emails sent: {job['emails_sent']}. Errors: {len(job['errors'])}")

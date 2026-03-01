@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-#  deploy.sh — Publix Deal Checker v4 (Fully Serverless)
+#  deploy.sh — Publix Deal Checker v6 (Fully Serverless)
 #  Idempotent: safe to re-run. Everything existing is skipped or updated.
 #  Usage: RESEND_API_KEY="re_xxx" ADMIN_SECRET="yourpassword" bash deploy.sh
 # =============================================================================
@@ -28,6 +28,27 @@ if [ -z "${ADMIN_SECRET}" ]; then
   echo "   Save this — you'll need it to access the Admin panel."
 fi
 
+# UNSUB_SECRET: salt for HMAC-based unsubscribe tokens. Auto-generated if not set.
+# Rotating this value invalidates all existing unsubscribe links.
+if [ -z "${UNSUB_SECRET}" ]; then
+  UNSUB_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || cat /dev/urandom | head -c 32 | base64 | tr -d '=+/\n' | head -c 64)
+  echo "   ℹ️  No UNSUB_SECRET set — generated automatically."
+  echo "   To keep unsubscribe links stable across re-deploys, set UNSUB_SECRET=... before running deploy.sh"
+fi
+
+# INBOUND_EMAIL_ADDR: Resend inbound address for list-import emails.
+# Change only this variable if the Resend address ever rotates.
+INBOUND_EMAIL_ADDR="${INBOUND_EMAIL_ADDR:-cartwise@minaushii.resend.app}"
+
+# RESEND_WEBHOOK_SECRET: Svix signing secret from Resend Webhooks dashboard.
+# Must be set manually after registering the webhook. Lambda returns 400 until set.
+if [ -z "${RESEND_WEBHOOK_SECRET}" ]; then
+  echo "   ⚠️  RESEND_WEBHOOK_SECRET not set — inbound webhook will reject all requests."
+  echo "   Obtain it from Resend dashboard after webhook registration, then re-deploy."
+  RESEND_WEBHOOK_SECRET="not-yet-configured"
+fi
+
+
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 S3_FRONTEND="${APP_NAME}-frontend-${AWS_ACCOUNT_ID}"
 FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
@@ -39,7 +60,7 @@ exists() { "$@" > /dev/null 2>&1; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   Publix Deal Checker v5 — Serverless Deployment     ║"
+echo "║   Publix Deal Checker v6 — Serverless Deployment     ║"
 echo "║   Account: ${AWS_ACCOUNT_ID}   Region: ${AWS_REGION} ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
@@ -60,12 +81,74 @@ create_table() {
   fi
 }
 
-create_table "${APP_NAME}-users"       "email"
-create_table "${APP_NAME}-sessions"    "token"
-create_table "${APP_NAME}-deals"       "store_id"
-create_table "${APP_NAME}-scrape-logs" "job_id"
-create_table "${APP_NAME}-auth-logs"   "log_id"
-create_table "${APP_NAME}-app-logs"    "log_id"
+create_table "${APP_NAME}-users"        "email"
+create_table "${APP_NAME}-sessions"     "token"
+create_table "${APP_NAME}-deals"        "store_id"
+create_table "${APP_NAME}-scrape-logs"  "job_id"
+create_table "${APP_NAME}-auth-logs"    "log_id"
+create_table "${APP_NAME}-app-logs"     "log_id"
+create_table "${APP_NAME}-deal-history" "store_id"
+create_table "${APP_NAME}-deal-corpus"  "corpus_id"
+
+# Enable TTL on deal-history (expires_at attribute)
+# Wait for table to reach ACTIVE status before attempting TTL update
+if exists aws dynamodb describe-table --table-name "${APP_NAME}-deal-history" --region "${AWS_REGION}"; then
+  TTL_STATUS=$(aws dynamodb describe-time-to-live \
+    --table-name "${APP_NAME}-deal-history" --region "${AWS_REGION}" \
+    --query 'TimeToLiveDescription.TimeToLiveStatus' --output text 2>/dev/null)
+  if [ "${TTL_STATUS}" != "ENABLED" ]; then
+    info "Waiting for deal-history table to become ACTIVE..."
+    aws dynamodb wait table-exists --table-name "${APP_NAME}-deal-history" --region "${AWS_REGION}"
+    TABLE_STATUS=""
+    for i in $(seq 1 20); do
+      TABLE_STATUS=$(aws dynamodb describe-table \
+        --table-name "${APP_NAME}-deal-history" --region "${AWS_REGION}" \
+        --query 'Table.TableStatus' --output text 2>/dev/null)
+      [ "${TABLE_STATUS}" = "ACTIVE" ] && break
+      info "  Table status: ${TABLE_STATUS} — waiting 5s..."
+      sleep 5
+    done
+    if [ "${TABLE_STATUS}" = "ACTIVE" ]; then
+      aws dynamodb update-time-to-live \
+        --table-name "${APP_NAME}-deal-history" \
+        --time-to-live-specification "Enabled=true,AttributeName=expires_at" \
+        --region "${AWS_REGION}" > /dev/null
+      ok "TTL enabled on deal-history (expires_at)"
+    else
+      echo "   ⚠️  deal-history table did not reach ACTIVE in time — TTL not set. Re-run deploy.sh to retry."
+    fi
+  else
+    skip "TTL on deal-history (already enabled)"
+  fi
+fi
+
+# Enable TTL on remaining tables (sessions, deals, auth-logs, app-logs)
+# All use expires_at attribute; idempotent — safe to re-run
+enable_ttl() {
+  local tbl="${APP_NAME}-$1"
+  if exists aws dynamodb describe-table --table-name "${tbl}" --region "${AWS_REGION}"; then
+    local status
+    status=$(aws dynamodb describe-time-to-live \
+      --table-name "${tbl}" --region "${AWS_REGION}" \
+      --query 'TimeToLiveDescription.TimeToLiveStatus' --output text 2>/dev/null)
+    if [ "${status}" != "ENABLED" ]; then
+      aws dynamodb update-time-to-live \
+        --table-name "${tbl}" \
+        --time-to-live-specification "Enabled=true,AttributeName=expires_at" \
+        --region "${AWS_REGION}" > /dev/null 2>&1 \
+        && ok "TTL enabled on ${tbl} (expires_at)" \
+        || echo "   ⚠️  TTL on ${tbl} not set (table may still be creating — re-run to retry)"
+    else
+      skip "TTL on ${tbl} (already enabled)"
+    fi
+  fi
+}
+
+enable_ttl "sessions"
+enable_ttl "deals"
+enable_ttl "auth-logs"
+enable_ttl "app-logs"
+enable_ttl "scrape-logs"
 
 # ── STEP 2: IAM role ──────────────────────────────────────────────────────────
 echo "▶  2/8  IAM role"
@@ -76,47 +159,32 @@ if ! exists aws iam get-role --role-name "${LAMBDA_ROLE}"; then
     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' > /dev/null
   aws iam attach-role-policy --role-name "${LAMBDA_ROLE}" \
     --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  aws iam put-role-policy --role-name "${LAMBDA_ROLE}" \
-    --policy-name "${APP_NAME}-lambda-policy" \
-    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[
-      {\"Effect\":\"Allow\",\"Action\":[\"dynamodb:GetItem\",\"dynamodb:PutItem\",\"dynamodb:UpdateItem\",\"dynamodb:DeleteItem\",\"dynamodb:Scan\",\"dynamodb:Query\"],
-       \"Resource\":[
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
-               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
-               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-app-logs\"
-       ]},
-      {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
-       \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
-      {\"Effect\":\"Allow\",\"Action\":[\"logs:DescribeLogStreams\",\"logs:GetLogEvents\",\"logs:FilterLogEvents\"],
-       \"Resource\":\"arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${APP_NAME}-scraper:*\"}
-    ]}"
   ok "IAM role: ${LAMBDA_ROLE}"
   info "Waiting 10s for role to propagate..."
   sleep 10
-else
-  # Update inline policy to ensure new permissions exist
-  aws iam put-role-policy --role-name "${LAMBDA_ROLE}" \
-    --policy-name "${APP_NAME}-lambda-policy" \
-    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[
-      {\"Effect\":\"Allow\",\"Action\":[\"dynamodb:GetItem\",\"dynamodb:PutItem\",\"dynamodb:UpdateItem\",\"dynamodb:DeleteItem\",\"dynamodb:Scan\",\"dynamodb:Query\"],
-       \"Resource\":[
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
-         \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
-               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
-               \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-app-logs\"
-       ]},
-      {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
-       \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
-      {\"Effect\":\"Allow\",\"Action\":[\"logs:DescribeLogStreams\",\"logs:GetLogEvents\",\"logs:FilterLogEvents\"],
-       \"Resource\":\"arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${APP_NAME}-scraper:*\"}
-    ]}" > /dev/null
-  skip "IAM role: ${LAMBDA_ROLE} (policy refreshed)"
 fi
+
+# Always refresh inline policy to ensure new table permissions are present
+aws iam put-role-policy --role-name "${LAMBDA_ROLE}" \
+  --policy-name "${APP_NAME}-lambda-policy" \
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[
+    {\"Effect\":\"Allow\",\"Action\":[\"dynamodb:GetItem\",\"dynamodb:PutItem\",\"dynamodb:UpdateItem\",\"dynamodb:DeleteItem\",\"dynamodb:Scan\",\"dynamodb:Query\"],
+     \"Resource\":[
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-app-logs\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deal-history\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deal-corpus\"
+     ]},
+    {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
+     \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
+    {\"Effect\":\"Allow\",\"Action\":[\"logs:DescribeLogStreams\",\"logs:GetLogEvents\",\"logs:FilterLogEvents\"],
+     \"Resource\":\"arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${APP_NAME}-scraper:*\"}
+  ]}" > /dev/null
+skip "IAM role: ${LAMBDA_ROLE} (policy refreshed)"
 
 LAMBDA_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${LAMBDA_ROLE}"
 
@@ -126,13 +194,20 @@ echo "▶  3/8  API Lambda"
 LAMBDA_API="${APP_NAME}-api"
 LAMBDA_API_ZIP="${TMPDIR_PY}/lambda_api.zip"
 
-if [ ! -f "${SCRIPT_DIR}/lambda/api.py" ]; then echo "ERROR: lambda/api.py not found"; exit 1; fi
+if [ ! -f "${SCRIPT_DIR}/lambda/handler.py" ]; then echo "ERROR: lambda/handler.py not found"; exit 1; fi
 
 PIP_CMD=$(which pip3 2>/dev/null || which pip 2>/dev/null || echo "python3 -m pip")
 
 API_BUILD_TMP="${TMPDIR_PY}/api_build"
 rm -rf "${API_BUILD_TMP}"; mkdir -p "${API_BUILD_TMP}"
-cp "${SCRIPT_DIR}/lambda/api.py" "${API_BUILD_TMP}/"
+# Copy all lambda modules (Architecture #1: modular split)
+for f in handler.py helpers.py auth.py prefs.py deals.py admin.py inbound.py logging_utils.py; do
+  cp "${SCRIPT_DIR}/lambda/${f}" "${API_BUILD_TMP}/"
+done
+# Include shared deal_parser (Architecture #2: shared library)
+mkdir -p "${API_BUILD_TMP}/shared"
+cp "${SCRIPT_DIR}/shared/__init__.py"   "${API_BUILD_TMP}/shared/"
+cp "${SCRIPT_DIR}/shared/deal_parser.py" "${API_BUILD_TMP}/shared/"
 info "Installing api dependencies (resend)..."
 ${PIP_CMD} install resend \
   --target "${API_BUILD_TMP}" --quiet \
@@ -154,14 +229,14 @@ with zipfile.ZipFile(dst,'w',zipfile.ZIP_DEFLATED) as z:
 print('API zip: '+dst)
 " || { echo "ERROR: Failed to create API zip"; exit 1; }
 
-API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR}}"
+API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},INBOUND_EMAIL_ADDR=${INBOUND_EMAIL_ADDR},RESEND_WEBHOOK_SECRET=${RESEND_WEBHOOK_SECRET}}"
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_API}" --region "${AWS_REGION}"; then
   aws lambda create-function \
     --function-name "${LAMBDA_API}" \
     --runtime python3.12 \
     --role "${LAMBDA_ROLE_ARN}" \
-    --handler api.handler \
+    --handler handler.handler \
     --zip-file "fileb://$(win_path "${LAMBDA_API_ZIP}")" \
     --timeout 30 \
     --memory-size 256 \
@@ -176,6 +251,7 @@ else
   aws lambda wait function-updated --function-name "${LAMBDA_API}" --region "${AWS_REGION}" 2>/dev/null || sleep 5
   aws lambda update-function-configuration \
     --function-name "${LAMBDA_API}" \
+    --handler handler.handler \
     --environment "${API_ENV}" \
     --region "${AWS_REGION}" > /dev/null
   ok "Lambda updated: ${LAMBDA_API}"
@@ -198,6 +274,10 @@ rm -rf "${SCRAPER_TMP}"; mkdir -p "${SCRAPER_TMP}"
 cp "${SCRIPT_DIR}/scraper/main.py"    "${SCRAPER_TMP}/"
 cp "${SCRIPT_DIR}/scraper/scraper.py" "${SCRAPER_TMP}/"
 cp "${SCRIPT_DIR}/scraper/matcher.py" "${SCRAPER_TMP}/"
+# Include shared deal_parser (Architecture #2: shared library)
+mkdir -p "${SCRAPER_TMP}/shared"
+cp "${SCRIPT_DIR}/shared/__init__.py"    "${SCRAPER_TMP}/shared/"
+cp "${SCRIPT_DIR}/shared/deal_parser.py" "${SCRAPER_TMP}/shared/"
 
 info "Installing scraper dependencies..."
 ${PIP_CMD} install resend rapidfuzz \
@@ -224,7 +304,7 @@ print('Scraper zip: '+dst)
 RESEND_KEY_VAL=$(aws ssm get-parameter --name "/publix/resend-api-key" \
   --with-decryption --query Parameter.Value --output text --region "${AWS_REGION}" 2>/dev/null || echo "${RESEND_API_KEY}")
 
-SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
+SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}"; then
   aws lambda create-function \
@@ -348,11 +428,17 @@ import re, os
 src = open(r'${SCRIPT_DIR_PY}/frontend/index.html', encoding='utf-8').read()
 out = src.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}')
 open('index_deploy_tmp.html', 'w', encoding='utf-8').write(out)
+js = open(r'${SCRIPT_DIR_PY}/frontend/app.js', encoding='utf-8').read()
+js_out = js.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}')
+open('app_deploy_tmp.js', 'w', encoding='utf-8').write(js_out)
 "
 MSYS_NO_PATHCONV=1 aws s3 cp index_deploy_tmp.html \
   "s3://${S3_FRONTEND}/index.html" \
   --content-type "text/html" --cache-control "no-cache, no-store, must-revalidate" --no-progress
-rm -f index_deploy_tmp.html
+MSYS_NO_PATHCONV=1 aws s3 cp app_deploy_tmp.js \
+  "s3://${S3_FRONTEND}/app.js" \
+  --content-type "application/javascript" --cache-control "no-cache, no-store, must-revalidate" --no-progress
+rm -f index_deploy_tmp.html app_deploy_tmp.js
 FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
 ok "Frontend deployed: ${FRONTEND_URL}"
 
@@ -383,10 +469,19 @@ aws events put-targets \
   --region "${AWS_REGION}" > /dev/null
 ok "EventBridge → scraper target set"
 
+# ── Final env update: re-apply both Lambda configs now that API_URL and FRONTEND_URL are known ──
+# On first deploy these were empty; this pass fills them in correctly.
+API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},INBOUND_EMAIL_ADDR=${INBOUND_EMAIL_ADDR},RESEND_WEBHOOK_SECRET=${RESEND_WEBHOOK_SECRET}}"
+SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
+aws lambda update-function-configuration --function-name "${LAMBDA_API}"     --environment "${API_ENV}"     --region "${AWS_REGION}" > /dev/null
+aws lambda wait function-updated         --function-name "${LAMBDA_API}"     --region "${AWS_REGION}"       2>/dev/null || sleep 5
+aws lambda update-function-configuration --function-name "${LAMBDA_SCRAPER}" --environment "${SCRAPER_ENV}" --region "${AWS_REGION}" > /dev/null
+ok "Lambda env vars updated with final URLs (FRONTEND_URL, API_URL, UNSUB_SECRET)"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════════╗"
-echo "║  ✅  Deployment complete!  (v5)                                   ║"
+echo "║  ✅  Deployment complete!  (v6)                                   ║"
 echo "╠═══════════════════════════════════════════════════════════════════╣"
 echo "║  Frontend:  ${FRONTEND_URL}"
 echo "║  API:       ${API_URL}"

@@ -11,12 +11,55 @@ from functools import wraps
 
 from helpers import (
     ok, err, _to_py, get_admin_auth, hash_pin,
-    users_table, sessions_table, scrape_logs_tbl,
-    auth_logs_tbl, app_logs_tbl,
+    users_table, sessions_table, admin_sessions_tbl,
+    scrape_logs_tbl, auth_logs_tbl, app_logs_tbl,
     lambda_client, logs_client,
     DEFAULT_PREFS, SCRAPER_FUNCTION, LOG_GROUP,
+    ADMIN_SECRET, ADMIN_SESSION_TTL_HOURS,
 )
 from auth import register
+
+
+import secrets as _secrets
+from datetime import timedelta
+
+
+# ── Admin session auth (PDC-04) ───────────────────────────────────────────────
+
+def admin_login(event, body):
+    """POST /admin/login — exchange raw secret for a short-lived session token.
+    PDC-04: admin session tokens expire after ADMIN_SESSION_TTL_HOURS (12h).
+    Uses hmac.compare_digest to prevent timing attacks (PDC-15).
+    """
+    import hmac as _hmac
+    if not ADMIN_SECRET:
+        return err("Admin access not configured.", 503)
+    candidate = (body.get("secret") or "").strip()
+    if not candidate or not _hmac.compare_digest(candidate, ADMIN_SECRET):
+        return err("Incorrect admin secret.", 401)
+
+    now        = datetime.now(timezone.utc)
+    token      = _secrets.token_hex(32)
+    expires_at = int((now + timedelta(hours=ADMIN_SESSION_TTL_HOURS)).timestamp())
+    admin_sessions_tbl.put_item(Item={
+        "token":      token,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at,
+    })
+    return ok({"token": token, "expires_in": ADMIN_SESSION_TTL_HOURS * 3600})
+
+
+def admin_logout_session(event):
+    """POST /admin/logout — delete the current admin session token."""
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    auth    = headers.get("authorization", "").strip()
+    if auth.lower().startswith("admintoken "):
+        token = auth[len("admintoken "):].strip()
+        try:
+            admin_sessions_tbl.delete_item(Key={"token": token})
+        except Exception as e:
+            print(f"[CW] admin_logout_session: {e}")
+    return ok({"message": "Admin session ended."})
 
 
 # ── Decorator ─────────────────────────────────────────────────────────────────
@@ -53,12 +96,12 @@ def admin_list_users(event):
                 "notify_email": p.get("notify_email") or u["email"],
                 "item_count":   len(p.get("items") or []),
                 "items":        p.get("items") or [],
-                "threshold":    (p.get("matching") or {}).get("threshold", 75),
+                "sensitivity":  (p.get("matching") or {}).get("sensitivity", "normal"),
             })
         users.sort(key=lambda x: x["email"])
         return ok({"users": users, "total": len(users)})
     except Exception as e:
-        print(f"[PDC] admin_list_users: {e}")
+        print(f"[CW] admin_list_users: {e}")
         return err("Failed to list users.", 500)
 
 
@@ -87,7 +130,7 @@ def admin_delete_user(event, email: str):
             ExpressionAttributeValues={":one": 1, ":ts": datetime.now(timezone.utc).isoformat()},
         )
     except Exception as e:
-        print(f"[PDC] admin_delete_user meta update: {e}")
+        print(f"[CW] admin_delete_user meta update: {e}")
     return ok({"message": f"User {email} deleted."})
 
 
@@ -213,7 +256,7 @@ def get_scrape_logs(event):
         items.sort(key=lambda x: x.get("started_at", ""), reverse=True)
         return ok({"logs": items[:15]})
     except Exception as e:
-        print(f"[PDC] admin_scrape_logs: {e}")
+        print(f"[CW] admin_scrape_logs: {e}")
         return err("Could not fetch scrape logs.", 500)
 
 
@@ -223,7 +266,7 @@ def invoke_scraper(event):
         lambda_client.invoke(FunctionName=SCRAPER_FUNCTION, InvocationType="Event")
         return ok({"message": "Scraper invoked. Check logs in ~30 seconds."})
     except Exception as e:
-        print(f"[PDC] admin_scrape_now: {e}")
+        print(f"[CW] admin_scrape_now: {e}")
         return err("Failed to invoke scraper.", 500)
 
 
@@ -248,7 +291,7 @@ def get_log_tail(event):
         all_lines.sort(key=lambda x: x["ts"])
         return ok({"lines": all_lines[-150:], "stream": streams[0]["logStreamName"]})
     except Exception as e:
-        print(f"[PDC] admin_logs_tail: {e}")
+        print(f"[CW] admin_logs_tail: {e}")
         return err("Could not fetch logs.", 500)
 
 
@@ -264,7 +307,7 @@ def get_auth_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit]})
     except Exception as e:
-        print(f"[PDC] admin_auth_logs: {e}")
+        print(f"[CW] admin_auth_logs: {e}")
         return err("Could not fetch auth logs.", 500)
 
 
@@ -278,7 +321,7 @@ def get_app_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit]})
     except Exception as e:
-        print(f"[PDC] admin_app_logs: {e}")
+        print(f"[CW] admin_app_logs: {e}")
         return err("Could not fetch app logs.", 500)
 
 
@@ -298,5 +341,5 @@ def admin_inbound_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit], "sender_filter": sender or None})
     except Exception as e:
-        print(f"[PDC] admin_inbound_logs: {e}")
+        print(f"[CW] admin_inbound_logs: {e}")
         return err("Could not fetch inbound logs.", 500)

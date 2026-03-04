@@ -11,11 +11,12 @@ import urllib.parse
 
 from helpers import (
     ok, err, _to_py, get_session,
-    dynamodb, history_tbl, corpus_tbl,
-    FRONTEND_URL, API_URL,
+    dynamodb, history_tbl, corpus_tbl, users_table,
+    FRONTEND_URL, API_URL, DEFAULT_PREFS,
 )
 from logging_utils import _log_app_event
 from shared.deal_parser import parse_deal
+from shared.matcher import match_deals_for_user
 
 # ── Publix API URLs ───────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ def search_stores(event):
             stores   = [_parse_store_feature(f) for f in features if f.get("properties", {}).get("storeNumber")]
             return ok({"stores": stores[:1]})
         except Exception as e:
-            print(f"[PDC] search_stores lookup: {e}")
+            print(f"[CW] search_stores lookup: {e}")
             return err("Store lookup failed.", 502)
     else:
         param = "zip" if is_zip else "city"
@@ -133,7 +134,7 @@ def search_stores(event):
             stores   = [_parse_store_feature(f) for f in features if f.get("properties", {}).get("storeNumber")]
             return ok({"stores": stores[:10]})
         except Exception as e:
-            print(f"[PDC] search_stores search: {e}")
+            print(f"[CW] search_stores search: {e}")
             return err("Store search failed.", 502)
 
 
@@ -198,7 +199,7 @@ def get_deals(event):
                         deals.append(d)
             except Exception as e:
                 fetch_failed = True
-                print(f"[PDC] get_deals live fetch: {e}")
+                print(f"[CW] get_deals live fetch: {e}")
         if fetch_failed and not deals:
             return err("Deals temporarily unavailable.", 502)
 
@@ -283,7 +284,7 @@ def get_deal_history(event):
         return ok({"store_id": store_id, "num_weeks": len(snapshots), "snapshots": snapshots})
 
     except Exception as e:
-        print(f"[PDC] get_deal_history: {e}")
+        print(f"[CW] get_deal_history: {e}")
         return err("Could not fetch deal history.", 500)
 
 
@@ -299,5 +300,86 @@ def get_deal_corpus(event):
         resp["headers"] = {**resp.get("headers", {}), "Cache-Control": "max-age=86400"}
         return resp
     except Exception as e:
-        print(f"[PDC] get_deal_corpus: {e}")
+        print(f"[CW] get_deal_corpus: {e}")
         return err("Could not fetch corpus.", 500)
+
+
+# ── Matches (on-the-fly) ─────────────────────────────────────────────────────
+
+def get_matches(event):
+    """GET /user/matches — compute matches on-the-fly from cached deals + user items.
+
+    Returns the same shape as the scraper's match output, ensuring web UI
+    and email alerts produce identical results from the shared matcher.
+    """
+    sess = get_session(event)
+    if not sess: return err("Not authenticated.", 401)
+
+    # Load user prefs
+    user = users_table.get_item(Key={"email": sess["email"]}).get("Item")
+    if not user: return err("User not found.", 404)
+    prefs     = _to_py(user.get("prefs", DEFAULT_PREFS))
+    items     = prefs.get("items") or []
+    matching  = prefs.get("matching") or {}
+    store_id  = (prefs.get("store_id") or "").strip()
+
+    if not store_id:
+        return ok({"matches": [], "total": 0, "message": "No store selected."})
+    if not items:
+        return ok({"matches": [], "total": 0, "message": "No items on list."})
+
+    # Load deals from cache
+    deals_table_obj = dynamodb.Table(os.environ["DEALS_TABLE"])
+    cached = deals_table_obj.get_item(Key={"store_id": store_id}).get("Item")
+
+    if not cached:
+        return ok({"matches": [], "total": 0, "message": "No deals cached for this store."})
+
+    num_chunks = int(cached.get("num_chunks", 0))
+    if num_chunks > 0:
+        raw_deals = []
+        for i in range(num_chunks):
+            chunk_row = deals_table_obj.get_item(Key={"store_id": f"{store_id}#{i}"}).get("Item")
+            if chunk_row:
+                raw_deals.extend(json.loads(chunk_row.get("deals", "[]")))
+    else:
+        raw_deals = json.loads(cached.get("deals", "[]"))
+
+    # Re-enrich via shared parser
+    deals = [parse_deal(d) for d in raw_deals]
+
+    # Run matcher
+    matches = match_deals_for_user(deals, items, matching)
+
+    # Enrich match results with full deal fields the frontend needs for rendering
+    # (saving_type, is_bogo, has_coupon, coupon_id, etc.)
+    deals_by_id = {d["id"]: d for d in deals if d.get("id")}
+    for m in matches:
+        deal_id = None
+        # Find the deal by title match since match result uses deal_name
+        for d in deals:
+            if d["title"] == m["deal_name"]:
+                deal_id = d["id"]
+                break
+        if deal_id and deal_id in deals_by_id:
+            src = deals_by_id[deal_id]
+            m["id"]                   = src.get("id", "")
+            m["saving_type"]          = src.get("saving_type", "")
+            m["is_bogo"]              = src.get("is_bogo", False)
+            m["has_coupon"]           = src.get("has_coupon", False)
+            m["coupon_id"]            = src.get("coupon_id", "")
+            m["is_extra"]             = src.get("is_extra", False)
+            m["is_publix_brand"]      = src.get("is_publix_brand", False)
+            m["categories"]           = src.get("categories", [])
+            m["savings_per_item"]     = src.get("savings_per_item")
+            m["final_price"]          = src.get("final_price", 0)
+            m["wa_promotion_type_id"] = src.get("wa_promotion_type_id", 1)
+            # Map deal_name to title for frontend consistency
+            m["title"] = m["deal_name"]
+
+    return ok({
+        "matches":     matches,
+        "total":       len(matches),
+        "store_id":    store_id,
+        "sensitivity": matching.get("sensitivity", "normal"),
+    })

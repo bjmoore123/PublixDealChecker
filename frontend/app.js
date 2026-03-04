@@ -1,12 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════
-const API = window.PUBLIX_API_URL || 'https://YOUR_API_GATEWAY_URL';
+const API = window.CARTWISE_API_URL || 'https://YOUR_API_GATEWAY_URL';
 
-let token     = localStorage.getItem('pdc_token') || null;
-let userEmail = localStorage.getItem('pdc_email') || null;
+// PDC-05: session token travels in HttpOnly cookie (SameSite=None; Secure).
+// Browser sends it automatically on all requests to api.cartwise.shopping.
+let userEmail = localStorage.getItem('cw_email') || null;
 let prefs     = null;
-let adminKey  = sessionStorage.getItem('pdc_admin') || null;
+let adminKey  = sessionStorage.getItem('cw_admin') || null;
+
+
+// PDC-05: session travels in HttpOnly cookie — sent automatically by browser.
+function authHeaders() {
+  return {'Content-Type': 'application/json'};
+}
 
 // Deal state
 let _allDeals      = [];       // raw from API
@@ -21,27 +28,26 @@ let _matchDeptCts  = {};
 let _savingTypes   = [];       // dynamic saving_type values from API
 
 // ── Item shape helpers ────────────────────────────────────────────────────────
-// prefs.items is an array of either plain strings (legacy) or
-// objects { name: string, mode: 'fuzzy'|'exact' } (v6.1+).
-// All code goes through these helpers so both shapes are handled transparently.
+// prefs.items is an array of plain strings.
+// Legacy {name, mode} dicts are handled transparently for backward compat.
 
 function itemName(item)  { return typeof item === 'string' ? item : (item?.name  || ''); }
-function itemMode(item)  { return typeof item === 'string' ? 'fuzzy' : (item?.mode || 'fuzzy'); }
-function itemObj(name, mode) { return { name, mode: mode || 'fuzzy' }; }
 
 // Return all item names as a plain string array (for display, autocomplete, etc.)
 function itemNames() { return (prefs?.items || []).map(itemName); }
 
-// Toggle mode for item at index i and save
-function toggleItemMode(i) {
-  if (!prefs?.items) return;
-  const item = prefs.items[i];
-  const cur  = itemMode(item);
-  prefs.items[i] = itemObj(itemName(item), cur === 'fuzzy' ? 'exact' : 'fuzzy');
-  renderItems();
-  savePrefs('list').catch(() => {});
-  computeMatches();
+// Returns false if the date string is a known null/placeholder value (e.g. 1/1–1/1 from Publix API)
+function isValidDate(s) {
+  if (!s || !s.trim()) return false;
+  const clean = s.trim().replace(/–/g, '-'); // normalize en-dash
+  // Publix returns 1/1 as a null placeholder when no date is available
+  return !/^1\/1$/.test(clean);
 }
+function hasValidDates(d) {
+  return isValidDate(d.valid_from) || isValidDate(d.valid_thru);
+}
+
+
 
 // ── History badge thresholds ──────────────────────────────────────────────────
 const HIST_MIN = {
@@ -178,9 +184,7 @@ async function loadDealHistory() {
   const storeId = prefs?.store_id;
   if (!storeId) return;
   try {
-    const res = await fetch(API + `/deals/history?store_id=${encodeURIComponent(storeId)}`, {
-      headers: { Authorization: 'Bearer ' + token }
-    });
+    const res = await fetch(API + `/deals/history?store_id=${encodeURIComponent(storeId)}`, {credentials:'include',headers:authHeaders()});
     if (!res.ok) return;
     _dealHistory = await res.json();
     renderMatches && renderMatches();
@@ -196,12 +200,12 @@ async function loadDealHistory() {
 async function loadCorpus() {
   if (_corpusTitles.length) return;
   // v2 key: forces all browsers to discard old &amp;-poisoned corpus cache.
-  const CORPUS_KEY = 'pdc_corpus_v2';
+  const CORPUS_KEY = 'cw_corpus_v2';
   const cached = sessionStorage.getItem(CORPUS_KEY);
   // Always decode entities — safety net for any data stored before the Python fix
   if (cached) { _corpusTitles = JSON.parse(cached).map(decodeEntities); return; }
   try {
-    const res = await fetch(API + '/deals/corpus', { headers: { Authorization: 'Bearer ' + token } });
+    const res = await fetch(API + '/deals/corpus', {credentials:'include',headers:authHeaders()});
     if (!res.ok) return;
     const data = await res.json();
     // Decode HTML entities as a safety net (Python fix handles new data; this covers transition)
@@ -325,7 +329,7 @@ async function doAuth() {
   const btn=document.getElementById('auth-btn');
   btn.disabled=true; btn.textContent=authMode==='login'?'Signing in…':'Creating account…';
   try{
-    const res=await fetch(API+(authMode==='login'?'/auth/login':'/auth/register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,pin})});
+    const res=await fetch(API+(authMode==='login'?'/auth/login':'/auth/register'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em,pin})});
     const data=await res.json();
     if(!res.ok){
       if(res.status===429 && data.retry_after_seconds){
@@ -336,12 +340,12 @@ async function doAuth() {
       return;
     }
     if(authMode==='register'){setMsg('auth-msg','Account created! Signing you in…','ok');await new Promise(r=>setTimeout(r,700));authMode='login';
-      token=null; prefs=null;
-      localStorage.removeItem('pdc_token'); localStorage.removeItem('pdc_email');
+      prefs=null;
+      localStorage.removeItem('cw_email');
       await doAuth();return;}
     clearInterval(_lockoutTimer); _lockoutTimer=null;
-    token=data.token;userEmail=data.email;
-    localStorage.setItem('pdc_token',token);localStorage.setItem('pdc_email',userEmail);
+    userEmail=data.email;
+    localStorage.setItem('cw_email',userEmail);
     prefs=data.prefs;
     const _isNew = authMode==='register' || !(prefs && prefs.store_id);
     enterApp({isFirstLogin: _isNew});
@@ -355,7 +359,7 @@ async function doAuth() {
 function enterApp(opts) {
   // opts.isFirstLogin = true means brand-new account (no store set yet)
   const isFirstLogin = (opts && opts.isFirstLogin) ||
-    (!localStorage.getItem('pdc_welcomed_'+userEmail) && !(prefs && prefs.store_id));
+    (!localStorage.getItem('cw_welcomed_'+userEmail) && !(prefs && prefs.store_id));
   document.getElementById('auth-screen').style.display='none';
   document.getElementById('app-screen').classList.add('visible');
   document.getElementById('topbar-email').textContent=userEmail;
@@ -375,9 +379,10 @@ function enterApp(opts) {
   loadCorpus();
 }
 async function doLogout(){
-  if(token){try{await fetch(API+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+token}});}catch(_){}}
-  token=null;userEmail=null;prefs=null;_allDeals=[];_allMatches=[];_dealsStoreId='';_storeData=null;
-  localStorage.removeItem('pdc_token');localStorage.removeItem('pdc_email');
+  // PDC-05: browser sends HttpOnly cookie automatically with credentials:'include'
+  try{await fetch(API+'/auth/logout',{method:'POST',credentials:'include',headers:authHeaders()});}catch(_){}
+  userEmail=null;prefs=null;_allDeals=[];_allMatches=[];_dealsStoreId='';_storeData=null;
+  localStorage.removeItem('cw_email');
   // Reset store UI so it doesn't bleed into the next session
   document.getElementById('store-card-wrap').style.display='none';
   document.getElementById('store-search-ui').style.display='';
@@ -397,9 +402,9 @@ function showPanel(name) {
   const mobileNav=document.getElementById('mnav-'+name);
   if(mobileNav) mobileNav.classList.add('active');
   if(name==='admin') initAdmin();
-  // Always force a fresh load when opening Matches so it reflects the latest scrape.
-  // Deals panel uses the cached version (fast, once per session).
-  if(name==='matches') loadDeals(false);
+  // Matches: load from server API (single source of truth)
+  // Deals: uses cached version (fast, once per session)
+  if(name==='matches') loadMatches();
   else if(name==='deals') preloadDeals();
 }
 function openMobileNav(){
@@ -419,12 +424,12 @@ function loadPrefs() {
   const sid=prefs.store_id||'';
   if(sid){
     // Set basic info immediately, then enrich with full store details in background.
-    // Capture token now so a logout before the fetch returns can't corrupt the new session.
-    const _tokenAtLoad = token;
+    // Capture email now so a logout before the fetch returns can't corrupt the new session.
+    const _emailAtLoad = userEmail;
     setStoreSel({id:sid, name:prefs.store_name||'', address:prefs.store_address||'', street:prefs.store_address||''});
-    fetch(API+'/stores/search?q='+encodeURIComponent(sid),{headers:{'Authorization':'Bearer '+token}})
+    fetch(API+'/stores/search?q='+encodeURIComponent(sid), {credentials:'include',headers:authHeaders()})
       .then(r=>r.json()).then(data=>{
-        if(token !== _tokenAtLoad) return; // session changed — discard stale result
+        if(userEmail !== _emailAtLoad) return; // session changed — discard stale result
         const s=(data.stores||[])[0];
         if(s && s.id===sid) setStoreSel(s);
       }).catch(()=>{});
@@ -438,9 +443,10 @@ function loadPrefs() {
   document.getElementById('email-settings-wrap').style.display = emailEnabled ? '' : 'none';
   document.getElementById('notify-email').value = prefs.notify_email || userEmail || '';
   renderItems();
-  const t=((prefs.matching||{}).threshold)||75;
-  document.getElementById('threshold').value=t;
-  document.getElementById('threshold-val').textContent=t;
+  const sens=((prefs.matching||{}).sensitivity)||'normal';
+  document.querySelectorAll('.sens-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.val===sens);
+  });
   const s=prefs.schedule||{};
   document.getElementById('sched-day').value  = s.days?.[0]??3;
   document.getElementById('sched-hour').value = s.hour??8;
@@ -454,7 +460,7 @@ function collectPrefs(){
     notify_email:  document.getElementById('notify-email').value.trim()||userEmail,
     email_enabled: document.getElementById('email-enabled').checked,
     items:         prefs?.items||[],
-    matching:      {threshold:parseInt(document.getElementById('threshold').value)},
+    matching:      {sensitivity: document.querySelector('.sens-btn.active')?.dataset.val || 'normal'},
     schedule:      {days:[parseInt(document.getElementById('sched-day').value)],
                     hour:parseInt(document.getElementById('sched-hour').value),
                     minute:0, ampm:document.getElementById('sched-ampm').value},
@@ -472,7 +478,7 @@ async function savePrefs(ctx){
   const p=collectPrefs();
   if(prefs) p.items=prefs.items||[];
   try{
-    const res=await fetch(API+'/user/prefs',{method:'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prefs:p})});
+    const res=await fetch(API+'/user/prefs',{method:'PUT',credentials:'include',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({prefs:p})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Save failed');
     prefs=data.prefs;
@@ -595,8 +601,7 @@ async function doStoreSearch(){
   const resultsEl = document.getElementById('store-results');
   resultsEl.innerHTML = '<div class="store-no-results">Searching…</div>';
   try{
-    const res = await fetch(API+'/stores/search?q='+encodeURIComponent(q),
-      {headers:{'Authorization':'Bearer '+token}});
+    const res = await fetch(API+'/stores/search?q='+encodeURIComponent(q), {credentials:'include',headers:authHeaders()});
     const data = await res.json();
     if(!res.ok) throw new Error(data.error||'Search failed');
     const stores = data.stores||[];
@@ -642,12 +647,10 @@ function selectStore(idx){
 function renderItems(){
   const items=(prefs&&prefs.items)||[];
   document.getElementById('items-ul').innerHTML=items.map((item,i)=>{
-    const name=decodeEntities(itemName(item)); // decode HTML entities stored from API titles
-    const mode=itemMode(item);
+    const name=decodeEntities(itemName(item));
     return `<li class="item-row">
       <span class="item-name">${escH(name)}<br><span class="item-freq list-item-freq" data-item="${escH(name)}"></span></span>
       <div class="item-row-actions">
-        <button class="mode-toggle${mode==='exact'?' exact':''}" onclick="toggleItemMode(${i})" title="${mode==='exact'?'Exact match — click for fuzzy':'Fuzzy match — click for exact'}">${mode==='exact'?'✓ exact':'fuzzy'}</button>
         <button class="btn-rm" onclick="removeItem(${i})">×</button>
       </div>
     </li>`;
@@ -658,14 +661,15 @@ function renderItems(){
 function addItem(){
   const inp=document.getElementById('new-item');const v=decodeEntities(inp.value.trim());
   if(!v) return;if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
-  if(!itemNames().includes(v)){prefs.items.push(itemObj(v,'exact'));renderItems();savePrefs('list').catch(()=>{});}
+  if(!itemNames().map(n=>n.toLowerCase()).includes(v.toLowerCase())){prefs.items.push(v);renderItems();savePrefs('list').catch(()=>{});}
   inp.value='';inp.focus();
 }
 function removeItem(i){if(!prefs||!prefs.items) return;prefs.items.splice(i,1);renderItems();syncDealCheckboxes();savePrefs('list').catch(()=>{});}
 function bulkImport(){
   const lines=document.getElementById('bulk-ta').value.split('\n').map(l=>l.trim()).filter(Boolean);
   if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
-  lines.forEach(l=>{if(!itemNames().includes(l)) prefs.items.push(itemObj(l,'exact'));});
+  const existing=new Set(itemNames().map(n=>n.toLowerCase()));
+  lines.forEach(l=>{if(!existing.has(l.toLowerCase())){prefs.items.push(l);existing.add(l.toLowerCase());}});
   renderItems();document.getElementById('bulk-ta').value='';syncDealCheckboxes();
   savePrefs('list').catch(()=>{});
 }
@@ -723,7 +727,7 @@ async function changePin(){
   const cur=getPin('.cur-pin'),nw=getPin('.new-pin');
   if(cur.length!==4||nw.length!==4){setMsg('pin-msg','Fill in both PINs.','err');return;}
   try{
-    const res=await fetch(API+'/auth/change-pin',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({current_pin:cur,new_pin:nw})});
+    const res=await fetch(API+'/auth/change-pin',{method:'POST',credentials:'include',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({current_pin:cur,new_pin:nw})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed');
     setMsg('pin-msg','✓ PIN updated','ok');clrPin('.cur-pin');clrPin('.new-pin');
@@ -732,14 +736,14 @@ async function changePin(){
 }
 async function deleteAccount(){
   closeOv('del-overlay');
-  try{await fetch(API+'/user/account',{method:'DELETE',headers:{'Authorization':'Bearer '+token}});}catch(_){}
+  try{await fetch(API+'/user/account',{method:'DELETE',credentials:'include',headers:authHeaders()});}catch(_){}
   doLogout();
 }
 async function resendWeeklyEmail(){
   const btn=document.getElementById('btn-resend-weekly');
   if(btn){btn.disabled=true;btn.textContent='Queuing…';}
   try{
-    const res=await fetch(API+'/user/resend-weekly',{method:'POST',headers:{'Authorization':'Bearer '+token}});
+    const res=await fetch(API+'/user/resend-weekly',{method:'POST',credentials:'include',headers:authHeaders()});
     const d=await res.json();
     if(res.ok){
       // Accurate timing: Lambda cold start + scrape + email delivery = 1–2 min realistically
@@ -760,7 +764,7 @@ async function sendTestEmail(){
   const msgEl=document.getElementById('test-email-msg');
   btn.disabled=true;msgEl.textContent='Sending…';msgEl.className='';
   try{
-    const res=await fetch(API+'/user/test-email',{method:'POST',headers:{'Authorization':'Bearer '+token}});
+    const res=await fetch(API+'/user/test-email',{method:'POST',credentials:'include',headers:authHeaders()});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed');
     msgEl.textContent='✓ '+data.message;msgEl.style.color='var(--green)';
@@ -814,7 +818,7 @@ async function preloadDeals() {
     await loadDeals(false);
   } else {
     // Already have deals for this store — check if server has newer data
-    const cachedTs = localStorage.getItem('pdc_deals_ts_'+sid) || '';
+    const cachedTs = localStorage.getItem('cw_deals_ts_'+sid) || '';
     if(_dealsUpdated && cachedTs === _dealsUpdated) return; // still fresh
     await loadDeals(false);
   }
@@ -835,7 +839,7 @@ async function loadDeals(forceRefresh=false){
   if(refreshBtn) refreshBtn.disabled=true;
 
   try{
-    const res=await fetch(API+'/deals?store_id='+encodeURIComponent(sid),{headers:{'Authorization':'Bearer '+token}});
+    const res=await fetch(API+'/deals?store_id='+encodeURIComponent(sid), {credentials:'include',headers:authHeaders()});
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Failed to load deals');
 
@@ -858,7 +862,7 @@ async function loadDeals(forceRefresh=false){
     _savingTypes  = data.saving_types||[];
 
     // Cache the timestamp so preloadDeals can skip reloading when data hasn't changed
-    if(_dealsUpdated) localStorage.setItem('pdc_deals_ts_'+sid, _dealsUpdated);
+    if(_dealsUpdated) localStorage.setItem('cw_deals_ts_'+sid, _dealsUpdated);
 
     // Populate Savings filter counts using correct saving_type mappings
     document.getElementById('fcnt-all').textContent    = _allDeals.length||'';
@@ -868,8 +872,8 @@ async function loadDeals(forceRefresh=false){
     document.getElementById('fcnt-extra').textContent  = _allDeals.filter(d=>isExtra(d)).length||'';
 
     // Validity sublabels on banner
-    const wa=_allDeals.find(d=>d.saving_type==='WeeklyAd'&&(d.valid_from||d.valid_thru));
-    const ex=_allDeals.find(d=>d.is_extra&&(d.valid_from||d.valid_thru));
+    const wa=_allDeals.find(d=>d.saving_type==='WeeklyAd'&&hasValidDates(d));
+    const ex=_allDeals.find(d=>d.is_extra&&hasValidDates(d));
 
     // Validity banner
     if(wa){
@@ -888,9 +892,6 @@ async function loadDeals(forceRefresh=false){
     document.getElementById('deals-browser').style.display='';
     document.getElementById('deals-q').value='';
     renderDeals();
-
-    // After deals load, compute matches
-    computeMatches();
 
   }catch(e){
     document.getElementById('deals-loading').style.display='none';
@@ -1021,21 +1022,52 @@ function dealTypeTag(d) {
 // (e.g. "$0.99 off"), not a sale price. Prefix those with "Save" so the user
 // isn't confused into thinking a $15 bottle of wine costs $0.99.
 function savingsDisplay(d) {
-  const s = decodeEntities(d.savings || '');
-  // BOGO deals with no dollar amount in the savings string: show a clear label
-  // instead of an empty badge. isBogo() is defined later but works here due to hoisting.
-  if (!s || s.trim() === '') {
-    if (d.is_bogo) return { text: 'Buy 1 Get 1 Free', isDiscount: true };
-    return '';
+  const sv  = decodeEntities(d.savings  || '');
+  const ai  = decodeEntities(d.save_line || '');  // additionalDealInfo from API
+  const fp  = d.final_price || 0;
+
+  // BOGO — savings string contains buy/get language; no single price to show
+  if (d.is_bogo || /buy\s*\d|get\s*\d\s*free/i.test(sv)) {
+    return {
+      text: sv || 'Buy 1 Get 1 Free',
+      isDiscount: true,
+      sub: ai && !/surprisingly low/i.test(ai) ? ai : null,
+    };
   }
-  const isDiscount = d.saving_type === 'ExtraSavings' ||
-                     d.saving_type === 'StackedDeals'  ||
-                     d.is_extra;
-  // If the string already starts with "Save" or "save", don't double-prefix
-  if (isDiscount && !/^save/i.test(s)) {
-    return { text: 'Save ' + s, isDiscount: true };
+
+  // Price + save amount (e.g. "$13.99 / Save $4.00")
+  // additionalDealInfo has "SAVE UP TO $X" or "SAVE $X ON N"
+  const saveMatch = ai.match(/save\s+(?:up\s+to\s+)?(\$[\d.]+)/i);
+  if (fp > 0 && saveMatch) {
+    return {
+      text: sv || `$${fp.toFixed(2)}`,
+      isDiscount: false,
+      sub: `Save ${saveMatch[1]}`,
+    };
   }
-  return { text: s, isDiscount: false };
+
+  // Stale cache: final_price missing but savings looks like a dollar price and
+  // ai has a save amount — show savings as price, save amount as sub
+  if (!fp && sv && /^\$[\d.]+/.test(sv) && saveMatch) {
+    return { text: sv, isDiscount: false, sub: `Save ${saveMatch[1]}` };
+  }
+
+  // Price only or multi-buy (e.g. "$7.99", "2 for $5.00")
+  if (sv) {
+    const isDiscount = d.is_extra || d.saving_type === 'ExtraSavings' || d.saving_type === 'StackedDeals';
+    if (isDiscount && !/^save/i.test(sv)) {
+      return { text: 'Save ' + sv, isDiscount: true, sub: null };
+    }
+    return { text: sv, isDiscount: false, sub: null };
+  }
+
+  // Text-only deals (e.g. "20% Off", "Buy 2 Get $3.00 Off")
+  // Never show raw "SAVE UP TO $X" as the main price — that's a save amount, not a price
+  if (ai && !/surprisingly low/i.test(ai) && !/^save\s+up\s+to/i.test(ai)) {
+    return { text: ai, isDiscount: true, sub: null };
+  }
+
+  return { text: '', isDiscount: false, sub: null };
 }
 
 // Generate deal card HTML (checkbox overlay)
@@ -1196,7 +1228,7 @@ function openDealModal(dealId) {
     rows.push(dr('Department', escH(decodeEntities(d.department))));
   if (d.brand)
     rows.push(dr('Brand', escH(decodeEntities(d.brand))));
-  if (d.valid_from || d.valid_thru)
+  if (hasValidDates(d))
     rows.push(dr('Valid', `${escH(decodeEntities(d.valid_from))} – ${escH(decodeEntities(d.valid_thru))}`));
   if (d.saving_type)
     rows.push(dr('Deal type', escH(SAVING_TYPE_LABEL[d.saving_type] || d.saving_type)));
@@ -1219,7 +1251,7 @@ function openDealModal(dealId) {
     id="modal-list-btn">${onList ? '✓ On My List' : '+ Add to My List'}</button>`);
 
   // ── Timeline: only show section if history is loaded ──────────────────────
-  const validCaption = (d.valid_from || d.valid_thru)
+  const validCaption = hasValidDates(d)
     ? `📅 Week of ${escH(decodeEntities(d.valid_from))}${d.valid_thru ? ' – ' + escH(decodeEntities(d.valid_thru)) : ''}`
     : '';
 
@@ -1273,12 +1305,11 @@ function modalToggleList() {
   if (names.includes(title.toLowerCase())) {
     prefs.items = prefs.items.filter(i => itemName(i).toLowerCase() !== title.toLowerCase());
   } else {
-    prefs.items.push(itemObj(title, 'fuzzy'));
+    prefs.items.push(title);
   }
   renderItems();
   syncDealCheckboxes();
   savePrefs('list').catch(() => {});
-  computeMatches();
   // Update button label in modal
   const onList = itemNames().map(n => n.toLowerCase()).includes(title.toLowerCase());
   const btn = document.getElementById('modal-list-btn');
@@ -1316,9 +1347,9 @@ function dealCardHtml(d){
       ${d.department?`<div class="deal-card-dept">${escH(decodeEntities(d.department))}</div>`:''}
       <div class="deal-card-title">${escH(title)}</div>
       ${desc?`<div class="deal-card-desc">${escH(desc)}</div>`:''}
-      <div class="deal-card-price${sv.isDiscount?' is-discount':''}">${escH(sv.text)}</div>
-      ${saveLine?`<div class="deal-card-save">${escH(saveLine)}</div>`:''}
-      ${(d.valid_from||d.valid_thru)?`<div class="deal-card-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
+      ${sv.text?`<div class="deal-card-price${sv.isDiscount?' is-discount':''}">${escH(sv.text)}</div>`:''}
+      ${sv.sub?`<div class="deal-card-save is-discount">${escH(sv.sub)}</div>`:''}
+      ${hasValidDates(d)?`<div class="deal-card-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
       ${finePrint?`<div class="deal-card-fine">${escH(finePrint)}</div>`:''}
       ${badges.length?`<div class="deal-card-badges">${badges.join('')}</div>`:''}
       ${d.has_coupon?`<a class="btn-clip" href="https://www.publix.com/savings/digital-coupons${d.coupon_id?'?cid='+d.coupon_id:''}" target="_blank" rel="noopener">✂️ Clip Coupon</a>`:''}
@@ -1341,14 +1372,12 @@ function attachDealCBListeners(){
       const title=cb.dataset.title||'';
       if(!prefs) prefs={};if(!prefs.items) prefs.items=[];
       if(cb.checked){
-        if(!itemNames().includes(title)) prefs.items.push(itemObj(title,'fuzzy'));
+        if(!itemNames().map(n=>n.toLowerCase()).includes(title.toLowerCase())) prefs.items.push(title);
       } else {
-        prefs.items=prefs.items.filter(i=>itemName(i)!==title);
+        prefs.items=prefs.items.filter(i=>itemName(i).toLowerCase()!==title.toLowerCase());
       }
       renderItems();
       savePrefs('list').catch(()=>{});
-      // Recompute matches after list changes
-      computeMatches();
     });
   });
 }
@@ -1356,111 +1385,84 @@ function attachDealCBListeners(){
 // ═══════════════════════════════════════════════════════════════════
 // MATCHES
 // ═══════════════════════════════════════════════════════════════════
-function computeMatches(){
-  if(!_allDeals.length) return;
-  const items  =(prefs?.items||[]);
-  const thresh =parseInt(document.getElementById('threshold').value)||75;
+let _matchesLoading = false;
 
-  const seen=new Set();
-  _allMatches=[];
-  for(const deal of _allDeals){
-    const title=(deal.title||'').toLowerCase();
-    for(const item of items){
-      const name  = itemName(item).toLowerCase();
-      const mode  = itemMode(item);
-      const score = matchScore(name, title, mode);
-      // exact-mode items use a fixed threshold of 70 (balanced 50/50 weights need
-      // a slightly lower bar); fuzzy-mode items use the slider threshold
-      const effectiveThresh = (mode === 'exact') ? Math.min(thresh, 70) : thresh;
-      if(score>=effectiveThresh){
-        const key=deal.id||title;
-        if(!seen.has(key)){
-          seen.add(key);
-          _allMatches.push({...deal, my_item:itemName(item), my_item_mode:mode, match_score:score});
-        }
-      }
-    }
-  }
-  _allMatches.sort((a,b)=>b.match_score-a.match_score);
+async function loadMatches(){
+  if(_matchesLoading) return;
+  const sid=prefs?.store_id;
+  if(!sid) return;
 
-  _matchDeptCts={};
-  _allMatches.forEach(d=>{const dep=(d.department||'Other').trim();_matchDeptCts[dep]=(_matchDeptCts[dep]||0)+1;});
-
-  buildDeptFilters('dept-matches',_matchDeptCts,'renderMatches');
-
-  // Update match filter counts using same mappings as Deals page
-  document.getElementById('mfcnt-all').textContent    = _allMatches.length||'';
-  document.getElementById('mfcnt-weekly').textContent = _allMatches.filter(d=>d.saving_type==='WeeklyAd').length||'';
-  document.getElementById('mfcnt-bogo').textContent   = _allMatches.filter(d=>isBogo(d)).length||'';
-  document.getElementById('mfcnt-coupon').textContent = _allMatches.filter(d=>isCoupon(d)).length||'';
-  document.getElementById('mfcnt-extra').textContent  = _allMatches.filter(d=>isExtra(d)).length||'';
-
-  // Validity info
-  const firstDeal=_allDeals.find(d=>d.valid_from||d.valid_thru);
-  const banner=document.getElementById('matches-banner');
-  if(firstDeal){
-    banner.innerHTML=`📅 Week of <strong>${firstDeal.valid_from}–${firstDeal.valid_thru}</strong> &nbsp;·&nbsp; <strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
-  } else {
-    banner.innerHTML=`<strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
-  }
-
+  _matchesLoading = true;
   document.getElementById('matches-err').style.display='none';
-  document.getElementById('matches-loading').style.display='none';
-  document.getElementById('matches-browser').style.display=_allMatches.length||items.length?'':'none';
-  renderMatches();
-}
+  document.getElementById('matches-loading').style.display='block';
+  document.getElementById('matches-browser').style.display='none';
 
-function onThresholdChange(){
-  // Threshold is per user — save then recompute
-  savePrefs('matching').catch(()=>{});
-  computeMatches();
-}
+  try{
+    const res=await fetch(API+'/user/matches',{credentials:'include',headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Failed to load matches');
 
-// ── Scoring algorithm ─────────────────────────────────────────────────────────
-// matchScore(item, title, mode) → 0–100
-//
-// Balances two signals:
-//   precision  = fraction of item words found in title  (did we find what we want?)
-//   coverage   = fraction of title words matched by item (is the title actually about this?)
-//
-// "mode" controls the coverage weight:
-//   'fuzzy' → precision 70% + coverage 30%  — good for short terms like "chicken"
-//   'exact' → precision 40% + coverage 60%  — penalises long bundle titles heavily
-//
-// This fixes the token_set_ratio problem where "publix chicken breast" scored 100
-// against a 14-word Knorr bundle because all 3 item words appeared somewhere in it.
-// With coverage factored in, that deal scores ~76 (border) vs a 7-word chicken
-// breast deal scoring ~83 (clear pass).
-//
-// The history-badge fuzzyScore calls below are title-to-title comparisons and are
-// intentionally kept as precision-only — they don't have the same false-positive problem.
+    // Decode entities on match results just like deals
+    _allMatches=(data.matches||[]).map(m=>({
+      ...m,
+      title:       decodeEntities(m.title       || m.deal_name || ''),
+      deal_name:   decodeEntities(m.deal_name   || ''),
+      description: decodeEntities(m.description || ''),
+      save_line:   decodeEntities(m.save_line   || ''),
+      savings:     decodeEntities(m.savings     || ''),
+      fine_print:  decodeEntities(m.fine_print  || ''),
+      department:  decodeEntities(m.department  || ''),
+      brand:       decodeEntities(m.brand       || ''),
+      my_item:     decodeEntities(m.my_item     || ''),
+    }));
 
-function matchScore(item, title, mode) {
-  if (!item || !title) return 0;
-  const iT = item.split(/\s+/).filter(Boolean);
-  const tT = title.split(/\s+/).filter(Boolean);
-  if (!iT.length || !tT.length) return 0;
+    _matchDeptCts={};
+    _allMatches.forEach(d=>{const dep=(d.department||'Other').trim();_matchDeptCts[dep]=(_matchDeptCts[dep]||0)+1;});
 
-  // Exact substring shortcut — only applies when title IS the item (very close match)
-  if (title === item) return 100;
+    buildDeptFilters('dept-matches',_matchDeptCts,'renderMatches');
 
-  let matched = 0;
-  for (const iw of iT) {
-    if (tT.some(tw => tw.includes(iw) || iw.includes(tw))) matched++;
+    // Update match filter counts
+    document.getElementById('mfcnt-all').textContent    = _allMatches.length||'';
+    document.getElementById('mfcnt-weekly').textContent = _allMatches.filter(d=>d.saving_type==='WeeklyAd').length||'';
+    document.getElementById('mfcnt-bogo').textContent   = _allMatches.filter(d=>isBogo(d)).length||'';
+    document.getElementById('mfcnt-coupon').textContent = _allMatches.filter(d=>isCoupon(d)).length||'';
+    document.getElementById('mfcnt-extra').textContent  = _allMatches.filter(d=>isExtra(d)).length||'';
+
+    // Validity info — use first match that has valid dates, or fall back to all deals
+    const firstDated=_allMatches.find(d=>hasValidDates(d)) || (_allDeals||[]).find(d=>hasValidDates(d));
+    const banner=document.getElementById('matches-banner');
+    if(firstDated && hasValidDates(firstDated)){
+      banner.innerHTML=`📅 Week of <strong>${firstDated.valid_from}–${firstDated.valid_thru}</strong> &nbsp;·&nbsp; <strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
+    } else {
+      banner.innerHTML=`<strong>${_allMatches.length}</strong> match${_allMatches.length!==1?'es':''} from your list`;
+    }
+
+    document.getElementById('matches-err').style.display='none';
+    document.getElementById('matches-loading').style.display='none';
+    document.getElementById('matches-browser').style.display=_allMatches.length||(prefs?.items||[]).length?'':'none';
+    renderMatches();
+
+  }catch(e){
+    document.getElementById('matches-loading').style.display='none';
+    document.getElementById('matches-err').textContent=e.message;
+    document.getElementById('matches-err').style.display='';
+  }finally{
+    _matchesLoading = false;
   }
-
-  const precision = matched / iT.length;
-  const coverage  = matched / tT.length;
-
-  // fuzzy: precision-heavy (65/35) — short terms like "chicken" score well
-  // exact: balanced (50/50)  — penalises long bundle titles; threshold auto-drops to 70
-  const pWeight = (mode === 'exact') ? 0.5 : 0.65;
-  const cWeight = (mode === 'exact') ? 0.5 : 0.35;
-
-  return Math.round((precision * pWeight + coverage * cWeight) * 100);
 }
 
-// Legacy name kept for history-badge calls (title-to-title, precision-only is correct there)
+function onSensitivityChange(val){
+  // Update active button state
+  document.querySelectorAll('.sens-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.val===val);
+  });
+  // Save then reload matches from server with new sensitivity
+  savePrefs('matching').then(()=>loadMatches()).catch(()=>{});
+}
+
+// ── fuzzyScore: title-to-title comparison for history badges ─────────────────
+// This is precision-only (all item words found in title) and is intentionally
+// different from the backend matcher — used only for deal quality indicators.
 function fuzzyScore(item, title) {
   if (!item || !title) return 0;
   if (title.includes(item)) return 100;
@@ -1489,7 +1491,7 @@ function onMatchFilter(changed){
 }
 
 
-// Add a match card's title to My List as an exact match (user explicitly chose this item)
+// Add a match card's title to My List
 function addMatchToList(title, btn) {
   const clean = decodeEntities(title);
   if (!prefs) prefs = {};
@@ -1499,7 +1501,7 @@ function addMatchToList(title, btn) {
     btn.disabled = true;
     return;
   }
-  prefs.items.push(itemObj(clean, 'exact'));
+  prefs.items.push(clean);
   renderItems();
   syncDealCheckboxes();
   savePrefs('list').catch(() => {});
@@ -1554,9 +1556,12 @@ function renderMatches(){
   const grid=document.getElementById('matches-grid');
   if(!matches.length){
     const items=prefs?.items||[];
+    const sens=document.querySelector('.sens-btn.active')?.dataset.val||'normal';
     const msg=!items.length
       ?'Add items to your shopping list first.'
-      :`No matches found at threshold ${document.getElementById('threshold').value}. Try lowering the sensitivity.`;
+      : sens==='strict'
+        ?'No matches found. Try switching to Normal or Loose sensitivity.'
+        :'No matches found this week for your list items.';
     grid.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div>${msg}</div>`;
     return;
   }
@@ -1564,7 +1569,7 @@ function renderMatches(){
   const sortedMatches = applySortOrder(matches, matchesSortVal);
   grid.innerHTML=sortedMatches.map(d=>{
     const emoji=deptEmoji(d.department);
-    const title=decodeEntities(d.title);
+    const title=decodeEntities(d.title || d.deal_name);
     const desc=decodeEntities(d.description);
     const sv=savingsDisplay(d);
     const saveLine=decodeEntities(d.save_line);
@@ -1578,26 +1583,17 @@ function renderMatches(){
         ${dealTypeTag(d)}
         <div class="match-title">${escH(title)}</div>
         ${desc?`<div class="match-desc">${escH(desc)}</div>`:''}
-        <div class="match-price${sv.isDiscount?' is-discount':''}">${escH(sv.text)}</div>
-        ${saveLine?`<div class="match-save">${escH(saveLine)}</div>`:''}
+        ${sv.text?`<div class="match-price${sv.isDiscount?' is-discount':''}">${escH(sv.text)}</div>`:''}
+        ${sv.sub?`<div class="match-save is-discount">${escH(sv.sub)}</div>`:''}
         ${(()=>{const hb=computeBadge(d,_dealHistory);return hb?`<span class="badge badge-${hb.type}">${hb.label}</span>`:'';})()}
-        ${(d.valid_from||d.valid_thru)?`<div class="match-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
-        ${d.my_item_mode==='exact'
-          ? `<div class="match-reason exact">✓ exact match</div>`
-          : `<div class="match-reason">matched: ${escH(d.my_item)}</div>`
-        }
-        <div class="match-score">${d.match_score}% match${(()=>{
-          const iT=(d.my_item||'').toLowerCase().split(/\s+/).filter(Boolean);
-          const tT=(d.title||'').toLowerCase().split(/\s+/).filter(Boolean);
-          if(!iT.length||!tT.length) return '';
-          let m=0;for(const iw of iT){if(tT.some(tw=>tw.includes(iw)||iw.includes(tw)))m++;}
-          return ` · ${m}/${tT.length} title words`;
-        })()}</div>
+        ${hasValidDates(d)?`<div class="match-valid">📅 Valid ${escH(decodeEntities(d.valid_from))}–${escH(decodeEntities(d.valid_thru))}</div>`:''}
+        <div class="match-reason">matched: ${escH(d.my_item)}</div>
+        <div class="match-score">${d.match_score}% match</div>
         ${d.has_coupon?`<a class="btn-clip" href="https://www.publix.com/savings/digital-coupons${d.coupon_id?'?cid='+d.coupon_id:''}" target="_blank" rel="noopener">✂️ Clip Coupon</a>`:''}
         ${(()=>{
-          const clean=decodeEntities(d.title);
+          const clean=decodeEntities(d.title || d.deal_name);
           const onList=itemNames().map(n=>n.toLowerCase()).includes(clean.toLowerCase());
-          return `<button class="btn-add-to-list${onList?' on-list':''}" onclick="event.stopPropagation();addMatchToList('${escH(d.title)}',this)" ${onList?'disabled':''}>
+          return `<button class="btn-add-to-list${onList?' on-list':''}" onclick="event.stopPropagation();addMatchToList('${escH(d.title || d.deal_name)}',this)" ${onList?'disabled':''}>
             ${onList?'✓ On list':'+ Add to List'}
           </button>`;
         })()}
@@ -1745,10 +1741,16 @@ function adminRenderInboundLogs(senderFilter){
 }
 
 
-function adminSignOut(){
+async function adminSignOut(){
+  // PDC-04: revoke the server-side admin session token
+  if(adminKey){
+    try{
+      await fetch(API+'/admin/logout',{method:'POST',headers:adminHdrs()});
+    }catch(_){}
+  }
   adminKey=null;
   _adminDataLoaded = false;  // allow re-fetch on next login
-  sessionStorage.removeItem('pdc_admin');
+  sessionStorage.removeItem('cw_admin');
   document.getElementById('admin-dash').style.display='none';
   document.getElementById('admin-login-sec').style.display='';
   document.getElementById('admin-secret-inp').value='';
@@ -1770,11 +1772,11 @@ async function adminPostLogin() {
 }
 async function initAdmin(){
   if(adminKey){
-    // Verify the cached secret is still valid before showing the dashboard
+    // Validate cached admin token is still alive (PDC-04)
     try{
-      const res=await fetch(API+'/admin/scrape-logs',{headers:{'Content-Type':'application/json','Authorization':'AdminSecret '+adminKey}});
+      const res=await fetch(API+'/admin/scrape-logs',{headers:adminHdrs()});
       if(res.status===401){
-        adminKey=null;sessionStorage.removeItem('pdc_admin');
+        adminKey=null;sessionStorage.removeItem('cw_admin');
         return; // show login form
       }
     }catch(_){}
@@ -1790,17 +1792,24 @@ async function adminLogin(){
   const btn=document.querySelector('#admin-login-sec .btn-save');
   if(btn){btn.disabled=true;btn.textContent='Verifying…';}
   try{
-    // Verify the secret by calling a real admin endpoint before accepting it
-    const res=await fetch(API+'/admin/scrape-logs',{headers:{'Content-Type':'application/json','Authorization':'AdminSecret '+s}});
+    // PDC-04: exchange secret for a short-lived session token
+    const res=await fetch(API+'/admin/login',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({secret:s})
+    });
     if(res.status===401){
       setMsg('admin-login-msg','Incorrect admin secret.','err');
       return;
     }
-    if(!res.ok && res.status!==200){
-      // Any non-auth error still means the secret was accepted
-      // only 401 means wrong password
+    if(!res.ok){
+      setMsg('admin-login-msg','Server error — try again.','err');
+      return;
     }
-    adminKey=s;sessionStorage.setItem('pdc_admin',s);
+    const data=await res.json();
+    adminKey=data.token;
+    sessionStorage.setItem('cw_admin',adminKey);
+    document.getElementById('admin-secret-inp').value=''; // clear secret from DOM
     adminPostLogin();
     document.getElementById('admin-login-sec').style.display='none';
     document.getElementById('admin-dash').style.display='block';
@@ -1811,7 +1820,7 @@ async function adminLogin(){
     if(btn){btn.disabled=false;btn.textContent='Authenticate';}
   }
 }
-function adminHdrs(){return{'Content-Type':'application/json','Authorization':'AdminSecret '+adminKey};}
+function adminHdrs(){return{'Content-Type':'application/json','Authorization':'AdminToken '+adminKey};}
 
 
 async function adminLoadStats(){
@@ -2263,13 +2272,13 @@ async function adminLoadCacheStats(){
 
 // ── Frontend error reporting ───────────────────────────────────────────────────
 window.onerror = function(msg, src, line, col, err){
-  if(!token) return; // skip silently — /log/error requires auth (PDC-11)
-  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+  if(!userEmail) return; // skip silently — /log/error requires auth (PDC-11)
+  try{fetch(API+'/log/error',{method:'POST',credentials:'include',headers:{...authHeaders(),'Content-Type':'application/json'},
     body:JSON.stringify({level:'error',message:String(msg),stack:err&&err.stack||'',url:src+'#L'+line+':'+col})});}catch(_){}
 };
 window.onunhandledrejection = function(e){
-  if(!token) return; // skip silently — /log/error requires auth (PDC-11)
-  try{fetch(API+'/log/error',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+  if(!userEmail) return; // skip silently — /log/error requires auth (PDC-11)
+  try{fetch(API+'/log/error',{method:'POST',credentials:'include',headers:{...authHeaders(),'Content-Type':'application/json'},
     body:JSON.stringify({level:'error',message:'Unhandled rejection: '+String(e.reason),stack:e.reason&&e.reason.stack||'',url:window.location.href})});}catch(_){}
 };
 
@@ -2313,7 +2322,7 @@ function wlcNext(){
 function wlcDismiss(){
   document.getElementById('wlc-overlay').classList.remove('vis');
   // Mark this user as welcomed so we never show again
-  if(userEmail) localStorage.setItem('pdc_welcomed_'+userEmail, '1');
+  if(userEmail) localStorage.setItem('cw_welcomed_'+userEmail, '1');
   // Ensure we're on the store panel after dismissal
   showPanel('store');
 }
@@ -2336,13 +2345,13 @@ function closeOv(id){document.getElementById(id).classList.remove('vis');}
 // AUTO-LOGIN
 // ═══════════════════════════════════════════════════════════════════
 (async function init(){
-  if(!token) return;
+  // Check active session via token
   try{
-    const res=await fetch(API+'/user/prefs',{headers:{'Authorization':'Bearer '+token}});
-    if(!res.ok){localStorage.removeItem('pdc_token');localStorage.removeItem('pdc_email');return;}
+    const res=await fetch(API+'/user/prefs', {credentials:'include',headers:authHeaders()});
+    if(!res.ok){localStorage.removeItem('cw_email');return;}
     const data=await res.json();
     prefs=data.prefs;userEmail=data.email;
-    enterApp({isFirstLogin: !localStorage.getItem('pdc_welcomed_'+data.email) && !(prefs && prefs.store_id)});
+    enterApp({isFirstLogin: !localStorage.getItem('cw_welcomed_'+data.email) && !(prefs && prefs.store_id)});
   }catch(_){}
 })();
 
@@ -2395,7 +2404,7 @@ function acInput() {
   _acIdx = -1;
 
   drop.innerHTML = [
-    `<div class="ac-item ac-item-free" data-val="${escH(q)}" onmousedown="acSelect(this.dataset.val)">${escH(q)}</div>`,
+    `<div class="ac-item ac-item-free" data-val="${escH(q)}" onmousedown="acSelect(this.dataset.val)">${escH(q)} <span style="font-size:10px;opacity:.55;margin-left:4px">add custom</span></div>`,
     ...suggestions.map(s =>
       `<div class="ac-item ac-item-deal" data-val="${escH(s)}" onmousedown="acSelect(this.dataset.val)">${escH(s)}</div>`
     )

@@ -101,7 +101,7 @@ async function adminLogin() {
     const data = await res.json();
     if (!res.ok) { showAdminMsg(data.error || 'Invalid secret'); return; }
     // Store session token, not the raw secret
-    sessionStorage.setItem('pdc_admin_token', data.token);
+    sessionStorage.setItem('cw_admin_token', data.token);
     // Clear the secret from the input
     document.getElementById('admin-secret-inp').value = '';
     adminDash();
@@ -111,7 +111,7 @@ async function adminLogin() {
 
 2. All admin API calls should send `Authorization: Bearer <admin_token>` instead of `AdminSecret <secret>`.
 
-3. `adminSignOut()` should clear `pdc_admin_token` from sessionStorage.
+3. `adminSignOut()` should clear `cw_admin_token` from sessionStorage.
 
 ---
 
@@ -180,7 +180,7 @@ def logout(event):
         try:
             users_table.update_item(...)  # valid_after (PDC-18, already done)
         except Exception as e:
-            print(f"[PDC] logout valid_after update failed: {e}")
+            print(f"[CW] logout valid_after update failed: {e}")
     # Expire the cookie
     expired_cookie = "session=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/"
     return {

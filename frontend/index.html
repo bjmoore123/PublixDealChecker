@@ -8,7 +8,7 @@
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta http-equiv="X-Frame-Options" content="DENY">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Publix Deal Checker</title>
+<title>Cartwise</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='56'>🛒</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
 <style>
@@ -153,13 +153,8 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .item-row:last-child{border-bottom:none}
 .item-name{font-size:14px;flex:1;min-width:0}
 .item-row-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
-/* Mode toggle pill */
-.mode-toggle{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border:1.5px solid var(--border);border-radius:20px;padding:2px 8px;cursor:pointer;background:var(--white);color:var(--ink-soft);transition:all .15s;white-space:nowrap;user-select:none}
-.mode-toggle:hover{border-color:var(--green);color:var(--green)}
-.mode-toggle.exact{background:var(--green-bg);border-color:var(--green);color:var(--green)}
 /* Match reason label on card */
 .match-reason{font-size:10px;color:var(--ink-soft);margin-top:3px}
-.match-reason.exact{color:var(--green);font-weight:700}
 .btn-rm{background:none;border:none;color:var(--ink-soft);font-size:18px;cursor:pointer;padding:0 4px;line-height:1}
 .btn-rm:hover{color:var(--red)}
 .items-ct{font-size:12px;color:var(--ink-soft)}
@@ -225,7 +220,8 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .deal-card-desc{font-size:11px;color:var(--ink-mid);line-height:1.4}
 .deal-card-price{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--green);margin-top:auto;padding-top:6px}
 .deal-card-price.is-discount{color:var(--amber)}
-.deal-card-save{font-size:11px;color:var(--amber);font-weight:700}
+.deal-card-save{font-size:11px;color:var(--ink-soft)}
+.deal-card-save.is-discount{font-size:11px;color:var(--amber);font-weight:700}
 .deal-type-tag{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-radius:4px;padding:1px 5px;margin-bottom:4px}
 .deal-type-tag.weekly{background:#e8f5e9;color:#2e7d32}
 .deal-type-tag.bogo{background:#fff3e0;color:#e65100}
@@ -287,17 +283,21 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 .match-desc{font-size:11px;color:var(--ink-mid)}
 .match-price{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--green);margin-top:auto;padding-top:6px}
 .match-price.is-discount{color:var(--amber)}
-.match-save{font-size:11px;color:var(--amber);font-weight:700}
+.match-save{font-size:11px;color:var(--ink-soft)}
+.match-save.is-discount{font-size:11px;color:var(--amber);font-weight:700}
 .match-valid{font-size:10px;color:var(--ink-soft)}
 .match-score{font-size:10px;color:var(--ink-soft);margin-top:2px}
 .match-banner{background:var(--green-bg);border:1.5px solid var(--green-dim);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--green)}
 
 /* THRESHOLD inline on matches page */
-.threshold-inline{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:16px 20px;margin-bottom:18px;box-shadow:var(--sh-sm);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.threshold-inline label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);white-space:nowrap}
-.threshold-inline input[type=range]{flex:1;min-width:120px;accent-color:var(--green)}
-.threshold-val{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green);min-width:28px}
-.threshold-inline .hint{font-size:12px;color:var(--ink-soft);white-space:nowrap}
+.sensitivity-bar{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:16px 20px;margin-bottom:18px;box-shadow:var(--sh-sm);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.sensitivity-bar label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);white-space:nowrap}
+.sens-group{display:flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden}
+.sens-btn{border:none;background:var(--white);color:var(--ink-soft);font-size:13px;font-weight:600;padding:8px 18px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.sens-btn:not(:last-child){border-right:1.5px solid var(--border)}
+.sens-btn:hover{background:var(--green-bg);color:var(--green)}
+.sens-btn.active{background:var(--green);color:white}
+.sensitivity-bar .hint{font-size:12px;color:var(--ink-soft);white-space:nowrap}
 
 /* SCRAPE LOGS */
 .scrape-bar{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px;font-size:13px;color:var(--green)}
@@ -520,7 +520,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 <!-- AUTH -->
 <div id="auth-screen">
   <div class="auth-card">
-    <div class="auth-hd"><h1>Publix Deal Checker</h1><p>Get notified when your grocery list goes on sale</p></div>
+    <div class="auth-hd"><h1>Cartwise</h1><p>Get notified when your grocery list goes on sale</p></div>
     <div class="auth-tabs">
       <button class="auth-tab active" onclick="switchTab('login')">Sign In</button>
       <button class="auth-tab" onclick="switchTab('register')">Create Account</button>
@@ -550,7 +550,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       <button class="burger" id="burger-btn" onclick="openMobileNav()" aria-label="Open menu">
         <span></span><span></span><span></span>
       </button>
-      <div class="tb-brand">Publix Deal Checker</div>
+      <div class="tb-brand">Cartwise</div>
     </div>
     <div class="tb-right">
       <span class="tb-email" id="topbar-email"></span>
@@ -693,14 +693,15 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
   <div class="panel-title">🎯 My Matches</div>
   <div class="panel-sub">Deals from this week that match items on your shopping list.</div>
 
-  <!-- Threshold control inline at top -->
-  <div class="threshold-inline" id="threshold-wrap">
+  <!-- Sensitivity control -->
+  <div class="sensitivity-bar" id="sensitivity-wrap">
     <label>Match Sensitivity</label>
-    <input type="range" id="threshold" min="40" max="100" value="75"
-      oninput="document.getElementById('threshold-val').textContent=this.value"
-      onchange="onThresholdChange()">
-    <span class="threshold-val" id="threshold-val">75</span>
-    <span class="hint">Higher = stricter. 75 recommended. Use ✓ exact on list items for precise matching.</span>
+    <div class="sens-group">
+      <button class="sens-btn" data-val="loose" onclick="onSensitivityChange('loose')">Loose</button>
+      <button class="sens-btn active" data-val="normal" onclick="onSensitivityChange('normal')">Normal</button>
+      <button class="sens-btn" data-val="strict" onclick="onSensitivityChange('strict')">Strict</button>
+    </div>
+    <span class="hint">Loose = more matches · Strict = fewer, more precise</span>
   </div>
 
   <div id="matches-loading" style="display:none;text-align:center;padding:48px">
@@ -775,7 +776,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       </div>
       <button class="btn-add" onclick="addItem()">+ Add</button>
     </div>
-    <div class="hint" style="margin-top:5px;font-size:12px;color:var(--ink-soft)">Items are added as <strong>exact match</strong> by default. Use the <em>fuzzy</em> toggle on each item to broaden matching.</div>
+    <div class="hint" style="margin-top:5px;font-size:12px;color:var(--ink-soft)">Selecting from the dropdown adds a known deal title. Type your own text to search for anything.</div>
     <ul class="items-ul" id="items-ul"></ul>
     <div class="items-ct" id="items-ct">0 items</div>
   </div>
@@ -881,7 +882,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
     <div class="acct-info">
       <div class="acct-avatar" id="acct-avatar">?</div>
       <div><div class="acct-email" id="acct-email-disp"></div>
-           <div class="acct-joined">Publix Deal Checker member</div></div>
+           <div class="acct-joined">Cartwise member</div></div>
     </div>
   </div>
   <div class="card">
@@ -1099,7 +1100,7 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
 <div class="wlc-overlay" id="wlc-overlay">
   <div class="wlc-modal">
     <div class="wlc-header">
-      <h2>Welcome to Publix Deal Checker 🛒</h2>
+      <h2>Welcome to Cartwise 🛒</h2>
       <p>Your personal grocery savings assistant</p>
     </div>
     <div class="wlc-body">
@@ -1111,14 +1112,14 @@ textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,60,.1)
       <!-- Step 1: What is this -->
       <div class="wlc-step active" id="wlc-step-0">
         <div class="wlc-step-title">Save money every week</div>
-        <div class="wlc-step-sub">Publix Deal Checker watches this week’s sales and alerts you when items from your shopping list go on sale — including BOGOs.</div>
+        <div class="wlc-step-sub">Cartwise watches this week’s sales and alerts you when items from your shopping list go on sale — including BOGOs.</div>
         <div class="wlc-feature">
           <div class="wlc-icon">🏷️</div>
           <div><h4>Browse all deals</h4><p>See every sale at your Publix, filtered by category, savings type, or BOGO.</p></div>
         </div>
         <div class="wlc-feature">
           <div class="wlc-icon">🎯</div>
-          <div><h4>Personalized matches</h4><p>Add items to your list and we’ll surface deals that match — even with fuzzy name matching.</p></div>
+          <div><h4>Personalized matches</h4><p>Add items to your list and we’ll surface deals that match — powered by smart matching that checks titles, brands, and descriptions.</p></div>
         </div>
         <div class="wlc-feature">
           <div class="wlc-icon">📧</div>

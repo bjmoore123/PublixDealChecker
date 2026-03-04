@@ -30,6 +30,29 @@ def _item_mode(item) -> str:
     return "fuzzy" if isinstance(item, str) else (item.get("mode") or "fuzzy")
 
 
+# Words that are product descriptors, not brand names.
+# Used to find the first brand-like word in an item string.
+_GENERIC = {
+    "extra", "virgin", "olive", "oil", "organic", "natural", "fresh", "original",
+    "classic", "premium", "select", "choice", "light", "regular", "whole", "low",
+    "fat", "free", "diet", "sugar", "sodium", "reduced", "best", "great", "pure",
+    "real", "true", "rich", "sweet", "golden", "dark", "plain", "simple",
+    "and", "with", "for", "from", "made", "all", "style", "brand", "new",
+    "california", "italian", "french", "american", "imported", "unsalted",
+    "salted", "seasoned", "sliced", "diced", "chopped", "frozen", "dried",
+    "boneless", "skinless", "ground", "lean", "thick", "thin", "large", "small",
+    "mini", "bite", "size", "pack", "count", "ounce", "pound", "liter",
+}
+
+
+def _first_brand_word(tokens: list[str]) -> str | None:
+    """Return the first token that looks like a brand name (not a generic descriptor)."""
+    for t in tokens:
+        if len(t) >= 4 and t not in _GENERIC:
+            return t
+    return None
+
+
 def _match_score(item_str: str, title: str, mode: str) -> int:
     """Return 0–100 match score for item_str against deal title."""
     if not item_str or not title:
@@ -46,11 +69,30 @@ def _match_score(item_str: str, title: str, mode: str) -> int:
 
     matched = sum(
         1 for iw in i_tokens
-        if any(iw in tw or tw in iw for tw in t_tokens)
+        if iw in t_tokens or any(
+            # Allow prefix match for plurals/possessives (e.g. "chicken" matches "chickens")
+            # but require minimum 4 chars to avoid short-token false positives
+            len(iw) >= 4 and len(tw) >= 4 and (iw.startswith(tw) or tw.startswith(iw))
+            for tw in t_tokens
+        )
     )
 
     precision = matched / len(i_tokens)
     coverage  = matched / len(t_tokens)
+
+    # Single-word items: score on precision only — the user is casting a broad net.
+    # Coverage would unfairly penalize long titles (e.g. "butter" vs 7-word title).
+    if len(i_tokens) == 1:
+        return 100 if matched else 0
+
+    # Brand penalty: if the first non-generic word of the item (likely the brand)
+    # is absent from the title entirely, cap at 50 — wrong brand is a near-miss.
+    brand_word = _first_brand_word(i_tokens)
+    if brand_word and brand_word not in t_tokens and not any(
+        len(brand_word) >= 4 and len(tw) >= 4 and (brand_word.startswith(tw) or tw.startswith(brand_word))
+        for tw in t_tokens
+    ):
+        return min(50, round((precision * 0.65 + coverage * 0.35) * 100))
 
     # fuzzy: precision-heavy (65/35) — short terms like "chicken" score well
     # exact: balanced (50/50)  — penalises long bundle titles; threshold drops to 70

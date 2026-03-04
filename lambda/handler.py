@@ -7,14 +7,15 @@ Architecture #1: module split complete.
 Architecture #7: login() receives explicit event (no __event__ mutation).
 """
 import urllib.parse
-from helpers import ok, err, get_body, CORS
+from helpers import ok, err, get_body, CORS, cors_headers
 
 from auth     import register, login, logout, change_pin
 from prefs    import get_prefs, save_prefs, delete_account, unsubscribe, send_test_email, resend_weekly_email
-from deals    import get_deals, search_stores, get_deal_history, get_deal_corpus
+from deals    import get_deals, search_stores, get_deal_history, get_deal_corpus, get_matches
 from logging_utils import log_frontend_error
 from inbound  import inbound_email_list
 from admin    import (
+    admin_login, admin_logout_session,
     admin_list_users, admin_create_user, admin_get_user, admin_delete_user,
     admin_reset_pin, admin_reset_email, admin_patch_prefs, admin_clear_items,
     admin_stats, admin_inbound_logs,
@@ -30,7 +31,7 @@ def handler(event, context):
     body     = get_body(event)
 
     if method == "OPTIONS":
-        return {"statusCode": 200, "headers": CORS, "body": ""}
+        return {"statusCode": 200, "headers": cors_headers(event), "body": ""}
 
     # ── User / auth routes ────────────────────────────────────────────────────
     if path == "/auth/register"   and method == "POST":   return register(body)
@@ -44,6 +45,7 @@ def handler(event, context):
     if path == "/user/unsubscribe" and method in ("GET", "POST"): return unsubscribe(event)
     if path == "/user/test-email"  and method == "POST":   return send_test_email(event)
     if path == "/user/resend-weekly" and method == "POST":  return resend_weekly_email(event)
+    if path == "/user/matches"     and method == "GET":    return get_matches(event)
 
     if path == "/stores/search"    and method == "GET":    return search_stores(event)
     if path == "/deals"            and method == "GET":    return get_deals(event)
@@ -54,6 +56,10 @@ def handler(event, context):
 
     # ── Inbound email (Resend webhook) ────────────────────────────────────────
     if path == "/inbound/email-list" and method == "POST": return inbound_email_list(event)
+
+    # ── Admin session auth (PDC-04) ───────────────────────────────────────────
+    if path == "/admin/login"        and method == "POST": return admin_login(event, body)
+    if path == "/admin/logout"       and method == "POST": return admin_logout_session(event)
 
     # ── Admin fixed routes ────────────────────────────────────────────────────
     if path == "/admin/users"        and method == "GET":  return admin_list_users(event)

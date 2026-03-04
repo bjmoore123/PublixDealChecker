@@ -20,14 +20,14 @@ from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 
 from scraper import get_deals
-from matcher import match_deals_for_user
+from shared.matcher import match_deals_for_user
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 AWS_REGION      = os.environ.get("PDC_REGION", os.environ.get("AWS_REGION", "us-east-1"))
 USERS_TABLE     = os.environ["USERS_TABLE"]
 DEALS_TABLE     = os.environ["DEALS_TABLE"]
-SCRAPE_LOGS_TBL = os.environ.get("SCRAPE_LOGS_TABLE", "publix-deal-checker-scrape-logs")
+SCRAPE_LOGS_TBL = os.environ.get("SCRAPE_LOGS_TABLE", "cartwise-scrape-logs")
 HISTORY_TABLE   = os.environ.get("HISTORY_TABLE", "")
 CORPUS_TABLE    = os.environ.get("CORPUS_TABLE", "")
 
@@ -36,7 +36,7 @@ FRONTEND_URL    = os.environ.get("FRONTEND_URL", "")
 API_URL         = os.environ.get("API_URL", "")        # base URL for unsubscribe endpoint
 UNSUB_SECRET    = (os.environ.get("UNSUB_SECRET", "") or "").strip()
 RESEND_FROM    = (
-    f"{os.environ.get('RESEND_FROM_NAME','Publix Alerts')} "
+    f"{os.environ.get('RESEND_FROM_NAME','Cartwise Alerts')} "
     f"<{os.environ.get('RESEND_FROM_ADDR','onboarding@resend.dev')}>"
 )
 
@@ -44,7 +44,7 @@ dynamodb        = boto3.resource("dynamodb", region_name=AWS_REGION)
 users_table     = dynamodb.Table(USERS_TABLE)
 deals_table     = dynamodb.Table(DEALS_TABLE)
 scrape_logs_tbl = dynamodb.Table(SCRAPE_LOGS_TBL)
-APP_LOGS_TBL    = os.environ.get("APP_LOGS_TABLE", "publix-deal-checker-app-logs")
+APP_LOGS_TBL    = os.environ.get("APP_LOGS_TABLE", "cartwise-app-logs")
 app_logs_tbl    = dynamodb.Table(APP_LOGS_TBL)
 
 
@@ -373,7 +373,7 @@ def handler(event, context):
 
 def main(send_emails: bool = False, target_email: str = ""):
     started_at = datetime.now(timezone.utc)
-    print(f"\nPublix Deal Checker — {date.today()}")
+    print(f"\nCartwise — {date.today()}")
     print("=" * 50)
 
     job = {

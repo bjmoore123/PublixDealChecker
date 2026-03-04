@@ -21,14 +21,18 @@ _VALID_LOG_LEVELS = {"error", "warn", "info"}
 
 def _log_auth_event(event: dict, email: str, success: bool, reason: str = ""):
     """Write a login attempt record to auth_logs.
-    Architecture #9: geo-lookup removed — stores raw IP only, no external HTTP call."""
+    Geo-IP from CloudFront-Viewer-Country/City edge headers (zero latency, no
+    external call). Fields present only when CloudFront is in front (Phase 3+);
+    gracefully absent otherwise."""
     try:
         ip      = _get_client_ip(event)
         headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
         ua      = headers.get("user-agent", "")[:200]
+        country = headers.get("cloudfront-viewer-country", "")[:4]   # ISO 3166-1 alpha-2
+        city    = headers.get("cloudfront-viewer-city", "")[:100]
         now     = datetime.now(timezone.utc)
         ttl     = int((now + timedelta(days=90)).timestamp())   # PDC-20: 90-day TTL
-        auth_logs_tbl.put_item(Item={
+        item = {
             "log_id":     f"{now.isoformat()}#{secrets.token_hex(4)}",
             "ts":         now.isoformat(),
             "email":      email or "(unknown)",
@@ -36,10 +40,13 @@ def _log_auth_event(event: dict, email: str, success: bool, reason: str = ""):
             "ip":         ip,
             "user_agent": ua,
             "reason":     reason,
-            "expires_at": ttl,   # attribute name matches deploy.sh TTL config
-        })
+            "expires_at": ttl,
+        }
+        if country: item["country"] = country
+        if city:    item["city"]    = city
+        auth_logs_tbl.put_item(Item=item)
     except Exception as e:
-        print(f"[PDC] _log_auth_event failed: {e}")  # never let logging break auth
+        print(f"[CW] _log_auth_event failed: {e}")  # never let logging break auth
 
 
 def _log_app_event(source: str, level: str = "info", **fields):
@@ -59,7 +66,7 @@ def _log_app_event(source: str, level: str = "info", **fields):
         }
         app_logs_tbl.put_item(Item=item)
     except Exception as e:
-        print(f"[PDC] _log_app_event failed: {e}")
+        print(f"[CW] _log_app_event failed: {e}")
 
 
 def log_frontend_error(event, body):
@@ -88,5 +95,5 @@ def log_frontend_error(event, body):
         })
         return ok({"message": "Logged."})
     except Exception as e:
-        print(f"[PDC] log_frontend_error write failed: {e}")
+        print(f"[CW] log_frontend_error write failed: {e}")
         return err("Log write failed.", 500)

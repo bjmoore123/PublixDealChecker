@@ -1,7 +1,7 @@
 """
 lambda/api.py  (v4)
 
-API Gateway Lambda handler for Publix Deal Checker.
+API Gateway Lambda handler for Cartwise.
 Auth: email + 4-digit PIN. Sessions stored in DynamoDB.
 Admin: separate ADMIN_SECRET token.
 
@@ -48,15 +48,15 @@ logs_client     = boto3.client("logs",   region_name=_region)
 
 users_table     = dynamodb.Table(os.environ["USERS_TABLE"])
 sessions_table  = dynamodb.Table(os.environ["SESSIONS_TABLE"])
-scrape_logs_tbl = dynamodb.Table(os.environ.get("SCRAPE_LOGS_TABLE", "publix-deal-checker-scrape-logs"))
-auth_logs_tbl   = dynamodb.Table(os.environ.get("AUTH_LOGS_TABLE",  "publix-deal-checker-auth-logs"))
-app_logs_tbl    = dynamodb.Table(os.environ.get("APP_LOGS_TABLE",   "publix-deal-checker-app-logs"))
-history_tbl     = dynamodb.Table(os.environ.get("HISTORY_TABLE",   "publix-deal-checker-deal-history"))
-corpus_tbl      = dynamodb.Table(os.environ.get("CORPUS_TABLE",    "publix-deal-checker-deal-corpus"))
+scrape_logs_tbl = dynamodb.Table(os.environ.get("SCRAPE_LOGS_TABLE", "cartwise-scrape-logs"))
+auth_logs_tbl   = dynamodb.Table(os.environ.get("AUTH_LOGS_TABLE",  "cartwise-auth-logs"))
+app_logs_tbl    = dynamodb.Table(os.environ.get("APP_LOGS_TABLE",   "cartwise-app-logs"))
+history_tbl     = dynamodb.Table(os.environ.get("HISTORY_TABLE",   "cartwise-deal-history"))
+corpus_tbl      = dynamodb.Table(os.environ.get("CORPUS_TABLE",    "cartwise-deal-corpus"))
 
 # Strip any accidental whitespace/newlines that can sneak in via Lambda env vars
 ADMIN_SECRET     = (os.environ.get("ADMIN_SECRET", "") or "").strip()
-SCRAPER_FUNCTION = os.environ.get("SCRAPER_FUNCTION", "publix-deal-checker-scraper")
+SCRAPER_FUNCTION = os.environ.get("SCRAPER_FUNCTION", "cartwise-scraper")
 LOG_GROUP        = f"/aws/lambda/{SCRAPER_FUNCTION}"
 # Secret salt for HMAC-based unsubscribe tokens. Rotate to invalidate all existing links.
 UNSUB_SECRET     = (os.environ.get("UNSUB_SECRET", "changeme-set-in-deploy") or "").strip()
@@ -253,7 +253,7 @@ def _geo_lookup(ip: str) -> dict:
     try:
         req = urllib.request.Request(
             f"http://ip-api.com/json/{ip}?fields=country,regionName,city,status",
-            headers={"User-Agent": "publix-deal-checker/1.0"},
+            headers={"User-Agent": "cartwise/1.0"},
         )
         with urllib.request.urlopen(req, timeout=3) as r:
             d = json.loads(r.read())
@@ -521,7 +521,7 @@ def inbound_email_list(event):
     skipped_names = []
     for name in parsed_names:
         if name.lower() not in existing:
-            prefs.setdefault("items", []).append({"name": name, "mode": "fuzzy"})
+            prefs.setdefault("items", []).append(name)
             existing.add(name.lower())
             added += 1
         else:
@@ -560,7 +560,7 @@ def admin_inbound_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit], "sender_filter": sender or None})
     except Exception as e:
-        print(f"[PDC] admin_inbound_logs: {e}")
+        print(f"[CW] admin_inbound_logs: {e}")
         return err("Could not fetch inbound logs.", 500)
 
 
@@ -692,7 +692,7 @@ def logout(event):
                 ExpressionAttributeValues={":t": int(datetime.now(timezone.utc).timestamp())},
             )
         except Exception as e:
-            print(f"[PDC] logout valid_after update failed: {e}")
+            print(f"[CW] logout valid_after update failed: {e}")
     return ok({"message": "Logged out."})
 
 
@@ -816,7 +816,7 @@ def unsubscribe(event):
         _log_app_event("api", "info", action="unsubscribe", email=email)
         return _unsub_html("Unsubscribed",
             f"Email alerts have been turned off for <strong>{email}</strong>. "
-            f"You can re-enable them at any time by signing in to Publix Deal Checker.")
+            f"You can re-enable them at any time by signing in to Cartwise.")
 
     return _unsub_html("Method Not Allowed", "Unexpected request method.", ok=False)
 
@@ -829,7 +829,7 @@ def _unsub_html(title: str, body_html: str, ok: bool = True) -> dict:
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — Publix Deal Checker</title>
+<title>{title} — Cartwise</title>
 <style>
   body{{font-family:Arial,sans-serif;background:#f5f5f5;display:flex;align-items:center;
         justify-content:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}}
@@ -845,7 +845,7 @@ def _unsub_html(title: str, body_html: str, ok: bool = True) -> dict:
   <div class="icon">{icon}</div>
   <h1>{title}</h1>
   <p>{body_html}</p>
-  <a href="{app_url}">← Back to Publix Deal Checker</a>
+  <a href="{app_url}">← Back to Cartwise</a>
 </div></body></html>"""
     return {
         "statusCode": 200,
@@ -862,7 +862,7 @@ def _unsub_confirm_page(email: str, token: str) -> dict:
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribe — Publix Deal Checker</title>
+<title>Unsubscribe — Cartwise</title>
 <style>
   body{{font-family:Arial,sans-serif;background:#f5f5f5;display:flex;align-items:center;
         justify-content:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}}
@@ -991,7 +991,7 @@ def search_stores(event):
             stores = [_parse_store_feature(f) for f in features if f.get("properties",{}).get("storeNumber")]
             return ok({"stores": stores[:1]})
         except Exception as e:
-            print(f"[PDC] search_stores lookup: {e}")
+            print(f"[CW] search_stores lookup: {e}")
         return err("Store lookup failed.", 502)
     else:
         param = "zip" if is_zip else "city"
@@ -1001,7 +1001,7 @@ def search_stores(event):
         try:
             raw = _store_fetch(url)
         except Exception as e:
-            print(f"[PDC] search_stores search: {e}")
+            print(f"[CW] search_stores search: {e}")
         return err("Store search failed.", 502)
         features = raw.get("features", [])
         stores = [_parse_store_feature(f) for f in features if f.get("properties",{}).get("storeNumber")]
@@ -1126,7 +1126,7 @@ def get_deals(event):
                 if not deals:
                     _log_app_event("cache", "warn", hit=False, store_id=store_id, endpoint="/deals",
                                    message=f"Live fetch failed: {e}")
-                    print(f"[PDC] get_deals live fetch: {e}")
+                    print(f"[CW] get_deals live fetch: {e}")
         return err("Deals temporarily unavailable.", 502)
 
     counts = {
@@ -1168,7 +1168,7 @@ def get_scrape_logs(event):
         items.sort(key=lambda x: x.get("started_at", ""), reverse=True)
         return ok({"logs": items[:15]})
     except Exception as e:
-        print(f"[PDC] admin_scrape_logs: {e}")
+        print(f"[CW] admin_scrape_logs: {e}")
         return err("Could not fetch scrape logs.", 500)
 
 
@@ -1178,7 +1178,7 @@ def invoke_scraper(event):
         lambda_client.invoke(FunctionName=SCRAPER_FUNCTION, InvocationType="Event")
         return ok({"message": f"Scraper invoked. Check logs in ~30 seconds."})
     except Exception as e:
-        print(f"[PDC] admin_scrape_now: {e}")
+        print(f"[CW] admin_scrape_now: {e}")
         return err("Failed to invoke scraper.", 500)
 
 
@@ -1205,7 +1205,7 @@ def get_log_tail(event):
         all_lines.sort(key=lambda x: x["ts"])
         return ok({"lines": all_lines[-150:], "stream": streams[0]["logStreamName"]})
     except Exception as e:
-        print(f"[PDC] admin_logs_tail: {e}")
+        print(f"[CW] admin_logs_tail: {e}")
         return err("Could not fetch logs.", 500)
 
 
@@ -1236,7 +1236,7 @@ def admin_list_users(event):
         users.sort(key=lambda x: x["email"])
         return ok({"users": users, "total": len(users)})
     except Exception as e:
-        print(f"[PDC] admin_list_users: {e}")
+        print(f"[CW] admin_list_users: {e}")
         return err("Failed to list users.", 500)
 
 
@@ -1411,7 +1411,7 @@ def get_auth_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit]})
     except Exception as e:
-        print(f"[PDC] admin_auth_logs: {e}")
+        print(f"[CW] admin_auth_logs: {e}")
         return err("Could not fetch auth logs.", 500)
 
 
@@ -1427,7 +1427,7 @@ def get_app_logs(event):
         items.sort(key=lambda x: x.get("ts", ""), reverse=True)
         return ok({"logs": items[:limit]})
     except Exception as e:
-        print(f"[PDC] admin_app_logs: {e}")
+        print(f"[CW] admin_app_logs: {e}")
         return err("Could not fetch app logs.", 500)
 
 
@@ -1457,7 +1457,7 @@ def log_frontend_error(event, body):
         })
         return ok({"message": "Logged."})
     except Exception as e:
-        print(f"[PDC] log_frontend_error write failed: {e}")
+        print(f"[CW] log_frontend_error write failed: {e}")
         return err("Log write failed.", 500)
 
 
@@ -1534,7 +1534,7 @@ def get_deal_history(event):
         })
 
     except Exception as e:
-        print(f"[PDC] get_deal_history: {e}")
+        print(f"[CW] get_deal_history: {e}")
         return err("Could not fetch deal history.", 500)
 
 
@@ -1559,7 +1559,7 @@ def get_deal_corpus(event):
         return resp
 
     except Exception as e:
-        print(f"[PDC] get_deal_corpus: {e}")
+        print(f"[CW] get_deal_corpus: {e}")
         return err("Could not fetch corpus.", 500)
 
 
@@ -1632,7 +1632,7 @@ def send_test_email(event):
     notify_email = (prefs.get("notify_email") or sess["email"]).strip()
 
     resend_key  = os.environ.get("RESEND_API_KEY","")
-    resend_from = (f"{os.environ.get('RESEND_FROM_NAME','Publix Alerts')} "
+    resend_from = (f"{os.environ.get('RESEND_FROM_NAME','Cartwise Alerts')} "
                    f"<{os.environ.get('RESEND_FROM_ADDR','onboarding@resend.dev')}>")
     if not resend_key:
         return err("Resend API key not configured.", 500)
@@ -1643,15 +1643,15 @@ def send_test_email(event):
         _resend.Emails.send({
             "from":    resend_from,
             "to":      [notify_email],
-            "subject": "✅ Publix Deal Checker — test email",
+            "subject": "✅ Cartwise — test email",
             "html":    f"""<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;color:#333;">
   <div style="background:#1a6b3c;color:white;padding:24px;border-radius:8px 8px 0 0;">
     <h2 style="margin:0;">✅ Test Email</h2>
-    <p style="margin:4px 0 0;opacity:.8;">Publix Deal Checker notifications are working.</p>
+    <p style="margin:4px 0 0;opacity:.8;">Cartwise notifications are working.</p>
   </div>
   <div style="background:white;border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
     <p>This is a test message sent to <strong>{notify_email}</strong>.</p>
-    <p style="color:#888;font-size:13px;margin-top:16px;">Sent from your Publix Deal Checker account: {sess["email"]}</p>
+    <p style="color:#888;font-size:13px;margin-top:16px;">Sent from your Cartwise account: {sess["email"]}</p>
   </div>
 </body></html>""",
         })
@@ -1663,5 +1663,5 @@ def send_test_email(event):
         _log_app_event("email", "error", ok=False,
                        to=notify_email, subject="test-email",
                        trigger="manual", user=sess["email"], message=str(e)[:200])
-        print(f"[PDC] send_test_email: {e}")
+        print(f"[CW] send_test_email: {e}")
         return err("Failed to send email.", 500)

@@ -1,8 +1,19 @@
 #!/bin/bash
 # =============================================================================
-#  deploy.sh — Publix Deal Checker v6 (Fully Serverless)
+#  deploy.sh — Cartwise v9 (Fully Serverless)
 #  Idempotent: safe to re-run. Everything existing is skipped or updated.
-#  Usage: RESEND_API_KEY="re_xxx" ADMIN_SECRET="yourpassword" bash deploy.sh
+#
+#  Basic usage (no custom domain):
+#    RESEND_API_KEY="re_xxx" ADMIN_SECRET="yourpassword" bash deploy.sh
+#
+#  With CloudFront + custom domain (Phase 3+):
+#    Set ACM_CERT_ARN and APP_DOMAIN before running. Phases 1 & 2 of the
+#    domain/SSL plan must be complete (domain registered, cert ISSUED) before
+#    these variables are available.
+#
+#    ACM_CERT_ARN="arn:aws:acm:us-east-1:ACCOUNT:certificate/YOUR-CERT-ID" \
+#    APP_DOMAIN="cartwise.shopping" \
+#    RESEND_API_KEY="re_xxx" ADMIN_SECRET="yourpassword" bash deploy.sh
 # =============================================================================
 
 export MSYS_NO_PATHCONV=1
@@ -12,9 +23,20 @@ TMPDIR_PY="$(cygpath -w "$(mktemp -d)" 2>/dev/null || mktemp -d)"
 win_path() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 AWS_REGION="us-east-1"
-APP_NAME="publix-deal-checker"
-RESEND_FROM_NAME="Publix Alerts"
+APP_NAME="cartwise"
+RESEND_FROM_NAME="Cartwise Alerts"
 RESEND_FROM_ADDR="onboarding@resend.dev"
+
+# ── CloudFront / custom domain (optional — Phase 3+) ──────────────────────────
+# Leave these unset to deploy without CloudFront (S3 HTTP only).
+# Set both to activate Phases 9-15 of this script.
+#   ACM_CERT_ARN  — ARN of an ISSUED ACM certificate in us-east-1
+#   APP_DOMAIN    — apex domain, e.g. cartwise.shopping
+ACM_CERT_ARN="${ACM_CERT_ARN:-}"
+APP_DOMAIN="${APP_DOMAIN:-}"
+CF_LOG_BUCKET="${APP_NAME}-cf-logs"
+CF_LOG_PREFIX="cf/"
+CF_COMMENT="${APP_NAME}"   # used to find existing distribution by Comment field
 
 if [ -z "${RESEND_API_KEY}" ]; then
   echo "ERROR: RESEND_API_KEY is not set."
@@ -51,22 +73,48 @@ fi
 
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 S3_FRONTEND="${APP_NAME}-frontend-${AWS_ACCOUNT_ID}"
-FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
+# Use CloudFront custom domain if configured; S3 website URL as pre-CloudFront fallback
+if [ -n "${APP_DOMAIN}" ]; then
+  FRONTEND_URL="https://${APP_DOMAIN}"
+else
+  FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
+fi
 
 ok()     { echo "   ✓ $*"; }
 skip()   { echo "   - $* (already exists)"; }
 info()   { echo "   → $*"; }
 exists() { "$@" > /dev/null 2>&1; }
 
+# apply_env FUNCTION_NAME KEY VALUE KEY VALUE ...
+# Writes Lambda env vars via a Python-generated JSON file so special chars
+# ($, %, spaces) in values are never interpreted by the shell.
+apply_env() {
+  local fn="$1"; shift
+  local env_file="${TMPDIR_PY}/env_${fn//[^a-zA-Z0-9]/_}.json"
+  python3 -c "
+import json, sys
+args = sys.argv[1:]
+it = iter(args)
+variables = {k: v for k, v in zip(it, it)}
+print(json.dumps({'Variables': variables}))
+" "$@" > "${env_file}"
+  local win_env_file
+  win_env_file="$(cygpath -m "${env_file}" 2>/dev/null || echo "${env_file}")"
+  MSYS_NO_PATHCONV=1 aws lambda update-function-configuration \
+    --function-name "${fn}" \
+    --environment "file://${win_env_file}" \
+    --region "${AWS_REGION}" > /dev/null
+}
+
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   Publix Deal Checker v6 — Serverless Deployment     ║"
+echo "║   Cartwise v9 — Serverless Deployment     ║"
 echo "║   Account: ${AWS_ACCOUNT_ID}   Region: ${AWS_REGION} ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 
 # ── STEP 1: DynamoDB tables ───────────────────────────────────────────────────
-echo "▶  1/8  DynamoDB tables"
+echo "▶  1/15  DynamoDB tables"
 
 create_table() {
   local name="$1" pk="$2" pktype="${3:-S}"
@@ -81,14 +129,15 @@ create_table() {
   fi
 }
 
-create_table "${APP_NAME}-users"        "email"
-create_table "${APP_NAME}-sessions"     "token"
-create_table "${APP_NAME}-deals"        "store_id"
-create_table "${APP_NAME}-scrape-logs"  "job_id"
-create_table "${APP_NAME}-auth-logs"    "log_id"
-create_table "${APP_NAME}-app-logs"     "log_id"
-create_table "${APP_NAME}-deal-history" "store_id"
-create_table "${APP_NAME}-deal-corpus"  "corpus_id"
+create_table "${APP_NAME}-users"          "email"
+create_table "${APP_NAME}-sessions"       "token"
+create_table "${APP_NAME}-admin-sessions" "token"
+create_table "${APP_NAME}-deals"          "store_id"
+create_table "${APP_NAME}-scrape-logs"    "job_id"
+create_table "${APP_NAME}-auth-logs"      "log_id"
+create_table "${APP_NAME}-app-logs"       "log_id"
+create_table "${APP_NAME}-deal-history"   "store_id"
+create_table "${APP_NAME}-deal-corpus"    "corpus_id"
 
 # Enable TTL on deal-history (expires_at attribute)
 # Wait for table to reach ACTIVE status before attempting TTL update
@@ -145,13 +194,14 @@ enable_ttl() {
 }
 
 enable_ttl "sessions"
+enable_ttl "admin-sessions"
 enable_ttl "deals"
 enable_ttl "auth-logs"
 enable_ttl "app-logs"
 enable_ttl "scrape-logs"
 
 # ── STEP 2: IAM role ──────────────────────────────────────────────────────────
-echo "▶  2/8  IAM role"
+echo "▶  2/15  IAM role"
 
 LAMBDA_ROLE="${APP_NAME}-lambda-role"
 if ! exists aws iam get-role --role-name "${LAMBDA_ROLE}"; then
@@ -172,6 +222,7 @@ aws iam put-role-policy --role-name "${LAMBDA_ROLE}" \
      \"Resource\":[
        \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-users\",
        \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-sessions\",
+       \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-admin-sessions\",
        \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-deals\",
        \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-scrape-logs\",
        \"arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${APP_NAME}-auth-logs\",
@@ -182,14 +233,18 @@ aws iam put-role-policy --role-name "${LAMBDA_ROLE}" \
     {\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],
      \"Resource\":\"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${APP_NAME}-scraper\"},
     {\"Effect\":\"Allow\",\"Action\":[\"logs:DescribeLogStreams\",\"logs:GetLogEvents\",\"logs:FilterLogEvents\"],
-     \"Resource\":\"arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${APP_NAME}-scraper:*\"}
+     \"Resource\":\"arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${APP_NAME}-scraper:*\"},
+    {\"Effect\":\"Allow\",\"Action\":[\"acm:DescribeCertificate\"],
+     \"Resource\":\"arn:aws:acm:us-east-1:${AWS_ACCOUNT_ID}:certificate/*\"},
+    {\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:ListBucket\"],
+     \"Resource\":[\"arn:aws:s3:::${CF_LOG_BUCKET}\",\"arn:aws:s3:::${CF_LOG_BUCKET}/*\"]}
   ]}" > /dev/null
 skip "IAM role: ${LAMBDA_ROLE} (policy refreshed)"
 
 LAMBDA_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${LAMBDA_ROLE}"
 
 # ── STEP 3: API Lambda ────────────────────────────────────────────────────────
-echo "▶  3/8  API Lambda"
+echo "▶  3/15  API Lambda"
 
 LAMBDA_API="${APP_NAME}-api"
 LAMBDA_API_ZIP="${TMPDIR_PY}/lambda_api.zip"
@@ -204,10 +259,11 @@ rm -rf "${API_BUILD_TMP}"; mkdir -p "${API_BUILD_TMP}"
 for f in handler.py helpers.py auth.py prefs.py deals.py admin.py inbound.py logging_utils.py; do
   cp "${SCRIPT_DIR}/lambda/${f}" "${API_BUILD_TMP}/"
 done
-# Include shared deal_parser (Architecture #2: shared library)
+# Include shared libraries (deal_parser + matcher)
 mkdir -p "${API_BUILD_TMP}/shared"
 cp "${SCRIPT_DIR}/shared/__init__.py"   "${API_BUILD_TMP}/shared/"
 cp "${SCRIPT_DIR}/shared/deal_parser.py" "${API_BUILD_TMP}/shared/"
+cp "${SCRIPT_DIR}/shared/matcher.py"    "${API_BUILD_TMP}/shared/"
 info "Installing api dependencies (resend)..."
 ${PIP_CMD} install resend \
   --target "${API_BUILD_TMP}" --quiet \
@@ -229,7 +285,7 @@ with zipfile.ZipFile(dst,'w',zipfile.ZIP_DEFLATED) as z:
 print('API zip: '+dst)
 " || { echo "ERROR: Failed to create API zip"; exit 1; }
 
-API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},INBOUND_EMAIL_ADDR=${INBOUND_EMAIL_ADDR},RESEND_WEBHOOK_SECRET=${RESEND_WEBHOOK_SECRET}}"
+# env applied via apply_env (supports special chars in ADMIN_SECRET)
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_API}" --region "${AWS_REGION}"; then
   aws lambda create-function \
@@ -240,10 +296,35 @@ if ! exists aws lambda get-function --function-name "${LAMBDA_API}" --region "${
     --zip-file "fileb://$(win_path "${LAMBDA_API_ZIP}")" \
     --timeout 30 \
     --memory-size 256 \
-    --environment "${API_ENV}" \
     --region "${AWS_REGION}" > /dev/null
+  aws lambda wait function-active --function-name "${LAMBDA_API}" --region "${AWS_REGION}"
+  apply_env "${LAMBDA_API}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "SESSIONS_TABLE" "${APP_NAME}-sessions" \
+    "ADMIN_SESSIONS_TABLE" "${APP_NAME}-admin-sessions" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "AUTH_LOGS_TABLE" "${APP_NAME}-auth-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "ADMIN_SECRET" "${ADMIN_SECRET}" \
+    "SCRAPER_FUNCTION" "${APP_NAME}-scraper" \
+    "PDC_REGION" "${AWS_REGION}" \
+    "RESEND_API_KEY" "${RESEND_API_KEY}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "INBOUND_EMAIL_ADDR" "${INBOUND_EMAIL_ADDR}" \
+    "RESEND_WEBHOOK_SECRET" "${RESEND_WEBHOOK_SECRET}" \
+    "ACM_CERT_ARN" "${ACM_CERT_ARN}" \
+    "CF_LOG_BUCKET" "${CF_LOG_BUCKET}" \
+    "CF_LOG_PREFIX" "${CF_LOG_PREFIX}"
   ok "Lambda created: ${LAMBDA_API}"
 else
+  aws lambda wait function-active --function-name "${LAMBDA_API}" --region "${AWS_REGION}" 2>/dev/null || true
   aws lambda update-function-code \
     --function-name "${LAMBDA_API}" \
     --zip-file "fileb://$(win_path "${LAMBDA_API_ZIP}")" \
@@ -252,20 +333,43 @@ else
   aws lambda update-function-configuration \
     --function-name "${LAMBDA_API}" \
     --handler handler.handler \
-    --environment "${API_ENV}" \
     --region "${AWS_REGION}" > /dev/null
+  apply_env "${LAMBDA_API}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "SESSIONS_TABLE" "${APP_NAME}-sessions" \
+    "ADMIN_SESSIONS_TABLE" "${APP_NAME}-admin-sessions" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "AUTH_LOGS_TABLE" "${APP_NAME}-auth-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "ADMIN_SECRET" "${ADMIN_SECRET}" \
+    "SCRAPER_FUNCTION" "${APP_NAME}-scraper" \
+    "PDC_REGION" "${AWS_REGION}" \
+    "RESEND_API_KEY" "${RESEND_API_KEY}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "INBOUND_EMAIL_ADDR" "${INBOUND_EMAIL_ADDR}" \
+    "RESEND_WEBHOOK_SECRET" "${RESEND_WEBHOOK_SECRET}" \
+    "ACM_CERT_ARN" "${ACM_CERT_ARN}" \
+    "CF_LOG_BUCKET" "${CF_LOG_BUCKET}" \
+    "CF_LOG_PREFIX" "${CF_LOG_PREFIX}"
   ok "Lambda updated: ${LAMBDA_API}"
 fi
 
 LAMBDA_API_ARN=$(aws lambda get-function --function-name "${LAMBDA_API}" --region "${AWS_REGION}" --query 'Configuration.FunctionArn' --output text)
 
 # ── STEP 4: Scraper Lambda ────────────────────────────────────────────────────
-echo "▶  4/8  Scraper Lambda"
+echo "▶  4/15  Scraper Lambda"
 
 LAMBDA_SCRAPER="${APP_NAME}-scraper"
 LAMBDA_SCRAPER_ZIP="${TMPDIR_PY}/lambda_scraper.zip"
 
-for f in main.py scraper.py matcher.py; do
+for f in main.py scraper.py; do
   [ ! -f "${SCRIPT_DIR}/scraper/${f}" ] && { echo "ERROR: Missing: ${SCRIPT_DIR}/scraper/${f}"; exit 1; }
 done
 
@@ -273,11 +377,11 @@ SCRAPER_TMP="${TMPDIR_PY}/scraper_build"
 rm -rf "${SCRAPER_TMP}"; mkdir -p "${SCRAPER_TMP}"
 cp "${SCRIPT_DIR}/scraper/main.py"    "${SCRAPER_TMP}/"
 cp "${SCRIPT_DIR}/scraper/scraper.py" "${SCRAPER_TMP}/"
-cp "${SCRIPT_DIR}/scraper/matcher.py" "${SCRAPER_TMP}/"
-# Include shared deal_parser (Architecture #2: shared library)
+# Include shared libraries (deal_parser + matcher)
 mkdir -p "${SCRAPER_TMP}/shared"
 cp "${SCRIPT_DIR}/shared/__init__.py"    "${SCRAPER_TMP}/shared/"
 cp "${SCRIPT_DIR}/shared/deal_parser.py" "${SCRAPER_TMP}/shared/"
+cp "${SCRIPT_DIR}/shared/matcher.py"     "${SCRAPER_TMP}/shared/"
 
 info "Installing scraper dependencies..."
 ${PIP_CMD} install resend rapidfuzz \
@@ -304,7 +408,7 @@ print('Scraper zip: '+dst)
 RESEND_KEY_VAL=$(aws ssm get-parameter --name "/publix/resend-api-key" \
   --with-decryption --query Parameter.Value --output text --region "${AWS_REGION}" 2>/dev/null || echo "${RESEND_API_KEY}")
 
-SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
+# env applied via apply_env (see below)
 
 if ! exists aws lambda get-function --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}"; then
   aws lambda create-function \
@@ -315,26 +419,51 @@ if ! exists aws lambda get-function --function-name "${LAMBDA_SCRAPER}" --region
     --zip-file "fileb://$(win_path "${LAMBDA_SCRAPER_ZIP}")" \
     --timeout 300 \
     --memory-size 512 \
-    --environment "${SCRAPER_ENV}" \
     --region "${AWS_REGION}" > /dev/null
+  aws lambda wait function-active --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}"
+  apply_env "${LAMBDA_SCRAPER}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "RESEND_API_KEY" "${RESEND_KEY_VAL}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "PDC_REGION" "${AWS_REGION}"
   ok "Lambda created: ${LAMBDA_SCRAPER}"
 else
+  aws lambda wait function-active --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}" 2>/dev/null || true
   aws lambda update-function-code \
     --function-name "${LAMBDA_SCRAPER}" \
     --zip-file "fileb://$(win_path "${LAMBDA_SCRAPER_ZIP}")" \
     --region "${AWS_REGION}" > /dev/null
   aws lambda wait function-updated --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}" 2>/dev/null || sleep 5
-  aws lambda update-function-configuration \
-    --function-name "${LAMBDA_SCRAPER}" \
-    --environment "${SCRAPER_ENV}" \
-    --region "${AWS_REGION}" > /dev/null
+  apply_env "${LAMBDA_SCRAPER}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "RESEND_API_KEY" "${RESEND_KEY_VAL}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "PDC_REGION" "${AWS_REGION}"
   ok "Lambda updated: ${LAMBDA_SCRAPER}"
 fi
 
 LAMBDA_SCRAPER_ARN=$(aws lambda get-function --function-name "${LAMBDA_SCRAPER}" --region "${AWS_REGION}" --query 'Configuration.FunctionArn' --output text)
 
 # ── STEP 5: SSM secrets (optional, for reference) ─────────────────────────────
-echo "▶  5/8  SSM secrets"
+echo "▶  5/15  SSM secrets"
 put_ssm() {
   local name="$1" val="$2" type="${3:-SecureString}"
   if ! exists aws ssm get-parameter --name "/publix/${name}" --region "${AWS_REGION}"; then
@@ -349,28 +478,52 @@ put_ssm "resend-from-name" "${RESEND_FROM_NAME}" "String"
 put_ssm "resend-from-addr" "${RESEND_FROM_ADDR}" "String"
 
 # ── STEP 6: API Gateway ───────────────────────────────────────────────────────
-echo "▶  6/8  API Gateway"
+echo "▶  6/15  API Gateway"
 
-API_ID=$(aws apigatewayv2 get-apis --region "${AWS_REGION}" \
-  --query "Items[?Name=='${APP_NAME}-api-gw'].ApiId" --output text 2>/dev/null)
+# Look up by custom domain mapping first (survives renames), then by name
+if [ -n "${APP_DOMAIN}" ]; then
+  API_ID=$(aws apigatewayv2 get-domain-name --domain-name "api.${APP_DOMAIN}" --region "${AWS_REGION}"     --query "ApiMappings" --output text 2>/dev/null || true)
+  API_ID=$(aws apigatewayv2 get-api-mappings --domain-name "api.${APP_DOMAIN}" --region "${AWS_REGION}"     --query "Items[0].ApiId" --output text 2>/dev/null || true)
+fi
+if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+  API_ID=$(aws apigatewayv2 get-apis --region "${AWS_REGION}"     --query "Items[?contains(Name,'-api-gw')].ApiId" --output text 2>/dev/null | awk '{print $1}')
+fi
 
 if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
   API_ID=$(aws apigatewayv2 create-api \
     --name "${APP_NAME}-api-gw" \
     --protocol-type HTTP \
-    --cors-configuration AllowOrigins=*,AllowMethods=*,AllowHeaders=* \
     --region "${AWS_REGION}" \
     --query 'ApiId' --output text)
   ok "API Gateway created: ${API_ID}"
-else
-  aws apigatewayv2 update-api \
-    --api-id "${API_ID}" \
-    --cors-configuration AllowOrigins=*,AllowMethods=*,AllowHeaders=* \
-    --region "${AWS_REGION}" > /dev/null 2>&1 || true
-  skip "API Gateway: ${API_ID}"
 fi
 
+# Always set exact CORS origins (supports both apex and www)
+APIGW_CORS_FILE="${TMPDIR_PY}/apigw_cors.json"
+python3 -c "
+import json, sys
+api_id = sys.argv[1]
+origins = [f'https://{sys.argv[2]}', f'https://www.{sys.argv[2]}']
+cfg = {
+  'ApiId': api_id,
+  'CorsConfiguration': {
+    'AllowOrigins':     origins,
+    'AllowMethods':     ['GET','POST','PUT','DELETE','OPTIONS'],
+    'AllowHeaders':     ['Content-Type','Authorization','Cookie'],
+    'AllowCredentials': True,
+  }
+}
+print(json.dumps(cfg))
+" "${API_ID}" "${APP_DOMAIN:-localhost}" > "${APIGW_CORS_FILE}"
+MSYS_NO_PATHCONV=1 aws apigatewayv2 update-api \
+  --cli-input-json "file://$(cygpath -m "${APIGW_CORS_FILE}" 2>/dev/null || echo "${APIGW_CORS_FILE}")" \
+  --region "${AWS_REGION}" > /dev/null
+
 API_URL="https://${API_ID}.execute-api.${AWS_REGION}.amazonaws.com"
+# If custom domain is configured, use it for API_URL so app.js gets the right URL at upload time
+if [ -n "${APP_DOMAIN}" ]; then
+  API_URL="https://api.${APP_DOMAIN}"
+fi
 
 INTEG_ID=$(aws apigatewayv2 get-integrations \
   --api-id "${API_ID}" --region "${AWS_REGION}" \
@@ -394,20 +547,32 @@ if [ -z "${INTEG_ID}" ] || [ "${INTEG_ID}" = "None" ]; then
     --stage-name "\$default" \
     --auto-deploy \
     --region "${AWS_REGION}" > /dev/null
-  aws lambda add-permission \
-    --function-name "${LAMBDA_API}" \
-    --statement-id "apigateway-invoke" \
-    --action lambda:InvokeFunction \
-    --principal apigateway.amazonaws.com \
-    --source-arn "arn:aws:execute-api:${AWS_REGION}:${AWS_ACCOUNT_ID}:${API_ID}/*" \
-    --region "${AWS_REGION}" > /dev/null 2>&1 || true
   ok "API Gateway integration + route created"
 else
-  skip "API Gateway integration"
+  # Always update integration URI to point to current Lambda (handles Lambda renames)
+  aws apigatewayv2 update-integration \
+    --api-id "${API_ID}" \
+    --integration-id "${INTEG_ID}" \
+    --integration-uri "${LAMBDA_API_ARN}" \
+    --region "${AWS_REGION}" > /dev/null
+  ok "API Gateway integration (already exists)"
 fi
+# Always ensure Lambda invoke permission exists for this API GW (idempotent)
+aws lambda add-permission \
+  --function-name "${LAMBDA_API}" \
+  --statement-id "apigateway-invoke" \
+  --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:${AWS_REGION}:${AWS_ACCOUNT_ID}:${API_ID}/*" \
+  --region "${AWS_REGION}" > /dev/null 2>&1 || true
+# Always update API GW name to match current app name
+aws apigatewayv2 update-api \
+  --api-id "${API_ID}" \
+  --name "${APP_NAME}-api-gw" \
+  --region "${AWS_REGION}" > /dev/null 2>&1 || true
 
 # ── STEP 7: Frontend ──────────────────────────────────────────────────────────
-echo "▶  7/8  Frontend (S3 static site)"
+echo "▶  7/15  Frontend (S3 static site)"
 
 if ! exists aws s3api head-bucket --bucket "${S3_FRONTEND}"; then
   aws s3api create-bucket --bucket "${S3_FRONTEND}" --region "${AWS_REGION}" > /dev/null
@@ -426,7 +591,7 @@ fi
 python3 -c "
 import re, os
 src = open(r'${SCRIPT_DIR_PY}/frontend/index.html', encoding='utf-8').read()
-out = src.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}')
+out = src.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}').replace('window.CARTWISE_API_URL', 'window.CARTWISE_API_URL')
 open('index_deploy_tmp.html', 'w', encoding='utf-8').write(out)
 js = open(r'${SCRIPT_DIR_PY}/frontend/app.js', encoding='utf-8').read()
 js_out = js.replace('https://YOUR_API_GATEWAY_URL', '${API_URL}')
@@ -438,6 +603,7 @@ MSYS_NO_PATHCONV=1 aws s3 cp index_deploy_tmp.html \
 MSYS_NO_PATHCONV=1 aws s3 cp app_deploy_tmp.js \
   "s3://${S3_FRONTEND}/app.js" \
   --content-type "application/javascript" --cache-control "no-cache, no-store, must-revalidate" --no-progress
+
 
 # Verify uploads succeeded by comparing local MD5 to S3 ETag
 # S3 ETag for non-multipart uploads equals the MD5 of the uploaded bytes
@@ -461,18 +627,24 @@ if not ok:
     print('  Re-run deploy.sh if frontend changes are not visible after a hard refresh.', file=sys.stderr)
 "
 rm -f index_deploy_tmp.html app_deploy_tmp.js
-FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
-ok "Frontend deployed: ${FRONTEND_URL}"
+# Use CloudFront URL if domain is configured, otherwise S3 website URL as fallback
+if [ -n "${APP_DOMAIN}" ]; then
+  FRONTEND_URL="https://${APP_DOMAIN}"
+  ok "Frontend deployed: ${FRONTEND_URL} (via CloudFront)"
+else
+  FRONTEND_URL="http://${S3_FRONTEND}.s3-website-${AWS_REGION}.amazonaws.com"
+  ok "Frontend deployed: ${FRONTEND_URL}"
+fi
 
 # ── STEP 8: EventBridge ───────────────────────────────────────────────────────
-echo "▶  8/8  EventBridge weekly trigger"
+echo "▶  8/15  EventBridge weekly trigger"
 
 RULE_NAME="${APP_NAME}-weekly"
 RULE_ARN=$(aws events put-rule \
   --name "${RULE_NAME}" \
   --schedule-expression "cron(0 12 ? * WED *)" \
   --state ENABLED \
-  --description "Publix Deal Checker — weekly scraper" \
+  --description "Cartwise — weekly scraper" \
   --region "${AWS_REGION}" \
   --query 'RuleArn' --output text)
 ok "EventBridge rule: ${RULE_NAME}"
@@ -493,23 +665,603 @@ ok "EventBridge → scraper target set"
 
 # ── Final env update: re-apply both Lambda configs now that API_URL and FRONTEND_URL are known ──
 # On first deploy these were empty; this pass fills them in correctly.
-API_ENV="Variables={USERS_TABLE=${APP_NAME}-users,SESSIONS_TABLE=${APP_NAME}-sessions,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,AUTH_LOGS_TABLE=${APP_NAME}-auth-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,ADMIN_SECRET=${ADMIN_SECRET},SCRAPER_FUNCTION=${APP_NAME}-scraper,PDC_REGION=${AWS_REGION},RESEND_API_KEY=${RESEND_API_KEY},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},INBOUND_EMAIL_ADDR=${INBOUND_EMAIL_ADDR},RESEND_WEBHOOK_SECRET=${RESEND_WEBHOOK_SECRET}}"
-SCRAPER_ENV="Variables={FRONTEND_URL=${FRONTEND_URL},API_URL=${API_URL},UNSUB_SECRET=${UNSUB_SECRET},USERS_TABLE=${APP_NAME}-users,DEALS_TABLE=${APP_NAME}-deals,SCRAPE_LOGS_TABLE=${APP_NAME}-scrape-logs,APP_LOGS_TABLE=${APP_NAME}-app-logs,HISTORY_TABLE=${APP_NAME}-deal-history,CORPUS_TABLE=${APP_NAME}-deal-corpus,RESEND_API_KEY=${RESEND_KEY_VAL},RESEND_FROM_NAME=${RESEND_FROM_NAME},RESEND_FROM_ADDR=${RESEND_FROM_ADDR},PDC_REGION=${AWS_REGION}}"
-aws lambda update-function-configuration --function-name "${LAMBDA_API}"     --environment "${API_ENV}"     --region "${AWS_REGION}" > /dev/null
-aws lambda wait function-updated         --function-name "${LAMBDA_API}"     --region "${AWS_REGION}"       2>/dev/null || sleep 5
-aws lambda update-function-configuration --function-name "${LAMBDA_SCRAPER}" --environment "${SCRAPER_ENV}" --region "${AWS_REGION}" > /dev/null
+# env applied via apply_env (supports special chars in ADMIN_SECRET)
+# env applied via apply_env (see below)
+apply_env "${LAMBDA_API}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "SESSIONS_TABLE" "${APP_NAME}-sessions" \
+    "ADMIN_SESSIONS_TABLE" "${APP_NAME}-admin-sessions" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "AUTH_LOGS_TABLE" "${APP_NAME}-auth-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "ADMIN_SECRET" "${ADMIN_SECRET}" \
+    "SCRAPER_FUNCTION" "${APP_NAME}-scraper" \
+    "PDC_REGION" "${AWS_REGION}" \
+    "RESEND_API_KEY" "${RESEND_API_KEY}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "INBOUND_EMAIL_ADDR" "${INBOUND_EMAIL_ADDR}" \
+    "RESEND_WEBHOOK_SECRET" "${RESEND_WEBHOOK_SECRET}" \
+    "ACM_CERT_ARN" "${ACM_CERT_ARN}" \
+    "CF_LOG_BUCKET" "${CF_LOG_BUCKET}" \
+    "CF_LOG_PREFIX" "${CF_LOG_PREFIX}"
+aws lambda wait function-updated --function-name "${LAMBDA_API}" --region "${AWS_REGION}" 2>/dev/null || sleep 5
+apply_env "${LAMBDA_SCRAPER}" \
+    "FRONTEND_URL" "${FRONTEND_URL}" \
+    "API_URL" "${API_URL}" \
+    "UNSUB_SECRET" "${UNSUB_SECRET}" \
+    "USERS_TABLE" "${APP_NAME}-users" \
+    "DEALS_TABLE" "${APP_NAME}-deals" \
+    "SCRAPE_LOGS_TABLE" "${APP_NAME}-scrape-logs" \
+    "APP_LOGS_TABLE" "${APP_NAME}-app-logs" \
+    "HISTORY_TABLE" "${APP_NAME}-deal-history" \
+    "CORPUS_TABLE" "${APP_NAME}-deal-corpus" \
+    "RESEND_API_KEY" "${RESEND_KEY_VAL}" \
+    "RESEND_FROM_NAME" "${RESEND_FROM_NAME}" \
+    "RESEND_FROM_ADDR" "${RESEND_FROM_ADDR}" \
+    "PDC_REGION" "${AWS_REGION}"
 ok "Lambda env vars updated with final URLs (FRONTEND_URL, API_URL, UNSUB_SECRET)"
+
+# ── STEP 9–15: CloudFront + Custom Domain (Phase 3+) ─────────────────────────
+# These steps are skipped if ACM_CERT_ARN or APP_DOMAIN are not set.
+# Complete Phases 1 & 2 of the domain/SSL plan first, then re-run deploy.sh
+# with ACM_CERT_ARN and APP_DOMAIN set as environment variables.
+
+CF_DIST_ID=""   # will be populated in step 12 if CF exists or is created
+
+if [ -z "${ACM_CERT_ARN}" ] || [ -z "${APP_DOMAIN}" ]; then
+  echo "▶  9-15/15  CloudFront + domain — SKIPPED"
+  info "Set ACM_CERT_ARN and APP_DOMAIN to activate CloudFront deployment."
+  info "See domain/SSL planning doc Phases 1-2 for prerequisites."
+else
+  API_SUBDOMAIN="api.${APP_DOMAIN}"
+
+  # ── STEP 9: S3 log bucket ──────────────────────────────────────────────────
+  echo "▶  9/15  S3 CloudFront log bucket"
+
+  if ! aws s3api head-bucket --bucket "${CF_LOG_BUCKET}" > /dev/null 2>&1; then
+    aws s3api create-bucket \
+      --bucket "${CF_LOG_BUCKET}" \
+      --region "${AWS_REGION}" > /dev/null
+    # Grant CloudFront log delivery write access
+    # BucketOwnerPreferred is required before ACLs can be granted on new buckets
+    aws s3api put-bucket-ownership-controls \
+      --bucket "${CF_LOG_BUCKET}" \
+      --ownership-controls '{"Rules":[{"ObjectOwnership":"BucketOwnerPreferred"}]}' > /dev/null
+    aws s3api put-bucket-acl \
+      --bucket "${CF_LOG_BUCKET}" \
+      --acl log-delivery-write > /dev/null 2>&1 || true
+    # Block all public access on the log bucket
+    aws s3api put-public-access-block \
+      --bucket "${CF_LOG_BUCKET}" \
+      --public-access-block-configuration \
+        "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" > /dev/null
+    # Expire logs after 90 days to control storage cost
+    aws s3api put-bucket-lifecycle-configuration \
+      --bucket "${CF_LOG_BUCKET}" \
+      --lifecycle-configuration '{
+        "Rules": [{
+          "ID": "expire-cf-logs",
+          "Status": "Enabled",
+          "Filter": {"Prefix": ""},
+          "Expiration": {"Days": 90}
+        }]
+      }' > /dev/null
+    ok "S3 log bucket: ${CF_LOG_BUCKET}"
+  else
+    skip "S3 log bucket: ${CF_LOG_BUCKET}"
+  fi
+
+  # ── STEP 10: CloudFront Origin Access Control ──────────────────────────────
+  echo "▶  10/15  CloudFront Origin Access Control (OAC)"
+
+  OAC_NAME="${APP_NAME}-oac"
+  OAC_ID=$(aws cloudfront list-origin-access-controls \
+    --query "OriginAccessControlList.Items[?Name=='${OAC_NAME}'].Id" \
+    --output text 2>/dev/null)
+
+  if [ -z "${OAC_ID}" ] || [ "${OAC_ID}" = "None" ]; then
+    OAC_ID=$(aws cloudfront create-origin-access-control \
+      --origin-access-control-config "{
+        \"Name\": \"${OAC_NAME}\",
+        \"Description\": \"${APP_NAME} S3 OAC\",
+        \"SigningProtocol\": \"sigv4\",
+        \"SigningBehavior\": \"always\",
+        \"OriginAccessControlOriginType\": \"s3\"
+      }" \
+      --query 'OriginAccessControl.Id' --output text)
+    ok "CloudFront OAC: ${OAC_ID}"
+  else
+    skip "CloudFront OAC: ${OAC_ID}"
+  fi
+
+  # ── STEP 11: Response headers policy (security headers) ───────────────────
+  echo "▶  11/15  CloudFront response headers policy"
+
+  HEADERS_POLICY_NAME="${APP_NAME}-security-headers"
+  HEADERS_POLICY_ID=$(aws cloudfront list-response-headers-policies \
+    --type custom \
+    --query "ResponseHeadersPolicyList.Items[?ResponseHeadersPolicy.ResponseHeadersPolicyConfig.Name=='${HEADERS_POLICY_NAME}'].ResponseHeadersPolicy.Id" \
+    --output text 2>/dev/null)
+
+  if [ -z "${HEADERS_POLICY_ID}" ] || [ "${HEADERS_POLICY_ID}" = "None" ]; then
+    HEADERS_POLICY_ID=$(aws cloudfront create-response-headers-policy \
+      --response-headers-policy-config "{
+        \"Name\": \"${HEADERS_POLICY_NAME}\",
+        \"Comment\": \"Security headers for ${APP_DOMAIN}\",
+        \"SecurityHeadersConfig\": {
+          \"StrictTransportSecurity\": {
+            \"Override\": true,
+            \"AccessControlMaxAgeSec\": 31536000,
+            \"IncludeSubdomains\": true,
+            \"Preload\": true
+          },
+          \"ContentTypeOptions\": {\"Override\": true},
+          \"FrameOptions\": {\"FrameOption\": \"DENY\", \"Override\": true},
+          \"XSSProtection\": {\"Protection\": true, \"ModeBlock\": true, \"Override\": true},
+          \"ReferrerPolicy\": {
+            \"ReferrerPolicy\": \"strict-origin-when-cross-origin\",
+            \"Override\": true
+          }
+        }
+      }" \
+      --query 'ResponseHeadersPolicy.Id' --output text)
+    ok "Response headers policy: ${HEADERS_POLICY_ID}"
+  else
+    skip "Response headers policy: ${HEADERS_POLICY_ID}"
+  fi
+
+  # ── STEP 12: CloudFront distribution ──────────────────────────────────────
+  echo "▶  12/15  CloudFront distribution"
+
+  # Look up by CNAME (resilient to app renames) then fall back to Comment
+  CF_DIST_ID=$(aws cloudfront list-distributions     --query "DistributionList.Items[?Aliases.Items[?@=='${APP_DOMAIN}']].Id"     --output text 2>/dev/null)
+  if [ -z "${CF_DIST_ID}" ] || [ "${CF_DIST_ID}" = "None" ]; then
+    CF_DIST_ID=$(aws cloudfront list-distributions       --query "DistributionList.Items[?Comment=='${CF_COMMENT}'].Id"       --output text 2>/dev/null)
+  fi
+  if [ -z "${CF_DIST_ID}" ] || [ "${CF_DIST_ID}" = "None" ]; then
+    CF_DIST_ID=$(aws cloudfront list-distributions       --query "DistributionList.Items[?Comment=='publix-deal-checker'].Id"       --output text 2>/dev/null)
+    [ -n "${CF_DIST_ID}" ] && [ "${CF_DIST_ID}" != "None" ] && echo "   → Found existing distribution by old name: ${CF_DIST_ID}"
+  fi
+
+  if [ -z "${CF_DIST_ID}" ] || [ "${CF_DIST_ID}" = "None" ]; then
+    # Update S3 bucket policy to OAC-only BEFORE creating distribution
+    # CloudFront needs the policy in place when it first contacts the origin
+    aws s3api put-bucket-policy --bucket "${S3_FRONTEND}" \
+      --policy "{
+        \"Version\": \"2012-10-17\",
+        \"Statement\": [{
+          \"Sid\": \"AllowCloudFrontOAC\",
+          \"Effect\": \"Allow\",
+          \"Principal\": {\"Service\": \"cloudfront.amazonaws.com\"},
+          \"Action\": \"s3:GetObject\",
+          \"Resource\": \"arn:aws:s3:::${S3_FRONTEND}/*\",
+          \"Condition\": {
+            \"StringEquals\": {
+              \"AWS:SourceArn\": \"arn:aws:cloudfront::${AWS_ACCOUNT_ID}:distribution/${CF_DIST_ID}\"
+            }
+          }
+        }]
+      }" > /dev/null
+    ok "S3 bucket policy updated (OAC-only)"
+
+    # Block direct public access — CloudFront is the only entry point from here on
+    aws s3api put-public-access-block --bucket "${S3_FRONTEND}" \
+      --public-access-block-configuration \
+        "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" > /dev/null
+    ok "S3 public access blocked (CloudFront-only)"
+
+    CF_DIST_ID=$(aws cloudfront create-distribution \
+      --distribution-config "{
+        \"CallerReference\": \"${APP_NAME}-$(date +%s)\",
+        \"Comment\": \"${CF_COMMENT}\",
+        \"Enabled\": true,
+        \"HttpVersion\": \"http2and3\",
+        \"IsIPV6Enabled\": true,
+        \"DefaultRootObject\": \"index.html\",
+        \"Aliases\": {
+          \"Quantity\": 2,
+          \"Items\": [\"${APP_DOMAIN}\", \"www.${APP_DOMAIN}\"]
+        },
+        \"Origins\": {
+          \"Quantity\": 1,
+          \"Items\": [{
+            \"Id\": \"s3-origin\",
+            \"DomainName\": \"${S3_FRONTEND}.s3.${AWS_REGION}.amazonaws.com\",
+            \"S3OriginConfig\": {\"OriginAccessIdentity\": \"\"},
+            \"OriginAccessControlId\": \"${OAC_ID}\"
+          }]
+        },
+        \"DefaultCacheBehavior\": {
+          \"TargetOriginId\": \"s3-origin\",
+          \"ViewerProtocolPolicy\": \"redirect-to-https\",
+          \"CachePolicyId\": \"658327ea-f89d-4fab-a63d-7e88639e58f6\",
+          \"OriginRequestPolicyId\": \"88a5eaf4-2fd4-4709-b370-b4c650ea3fcf\",
+          \"ResponseHeadersPolicyId\": \"${HEADERS_POLICY_ID}\",
+          \"Compress\": true,
+          \"AllowedMethods\": {
+            \"Quantity\": 2,
+            \"Items\": [\"GET\", \"HEAD\"],
+            \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\", \"HEAD\"]}
+          }
+        },
+        \"CustomErrorResponses\": {
+          \"Quantity\": 1,
+          \"Items\": [{
+            \"ErrorCode\": 403,
+            \"ResponsePagePath\": \"/index.html\",
+            \"ResponseCode\": \"200\",
+            \"ErrorCachingMinTTL\": 10
+          }]
+        },
+        \"Logging\": {
+          \"Enabled\": true,
+          \"Bucket\": \"${CF_LOG_BUCKET}.s3.amazonaws.com\",
+          \"Prefix\": \"${CF_LOG_PREFIX}\",
+          \"IncludeCookies\": false
+        },
+        \"ViewerCertificate\": {
+          \"ACMCertificateArn\": \"${ACM_CERT_ARN}\",
+          \"SSLSupportMethod\": \"sni-only\",
+          \"MinimumProtocolVersion\": \"TLSv1.2_2021\"
+        },
+        \"Restrictions\": {
+          \"GeoRestriction\": {
+            \"RestrictionType\": \"whitelist\",
+            \"Quantity\": 1,
+            \"Items\": [\"US\"]
+          }
+        }
+      }" \
+      --query 'Distribution.Id' --output text)
+    ok "CloudFront distribution created: ${CF_DIST_ID}"
+    info "Distribution takes ~15 minutes to deploy globally."
+  else
+    # Distribution exists — verify origin and logging bucket match current config.
+    # This handles bucket renames (e.g. publix-deal-checker → cartwise).
+    CURRENT_ORIGIN=$(aws cloudfront get-distribution \
+      --id "${CF_DIST_ID}" \
+      --query "Distribution.DistributionConfig.Origins.Items[0].DomainName" \
+      --output text 2>/dev/null)
+    EXPECTED_ORIGIN="${S3_FRONTEND}.s3.${AWS_REGION}.amazonaws.com"
+
+    if [ "${CURRENT_ORIGIN}" != "${EXPECTED_ORIGIN}" ]; then
+      info "CloudFront origin mismatch (${CURRENT_ORIGIN} → ${EXPECTED_ORIGIN}), updating..."
+      CF_ETAG=$(aws cloudfront get-distribution-config \
+        --id "${CF_DIST_ID}" --query "ETag" --output text)
+      CF_TMP="$(cygpath -m "${SCRIPT_DIR}" 2>/dev/null || echo "${SCRIPT_DIR}")/cf_update_tmp.json"
+      python3 -c "
+import json, subprocess
+result = subprocess.run(
+    ['aws','cloudfront','get-distribution-config','--id','${CF_DIST_ID}','--output','json'],
+    capture_output=True, text=True)
+d = json.loads(result.stdout)
+cfg = d['DistributionConfig']
+cfg['Origins']['Items'][0]['DomainName'] = '${EXPECTED_ORIGIN}'
+if cfg.get('Logging',{}).get('Bucket'):
+    cfg['Logging']['Bucket'] = '${CF_LOG_BUCKET}.s3.amazonaws.com'
+with open('${CF_TMP}', 'w') as f:
+    json.dump(cfg, f)
+print('Config written to ${CF_TMP}')
+"
+      MSYS_NO_PATHCONV=1 aws cloudfront update-distribution \
+        --id "${CF_DIST_ID}" \
+        --if-match "${CF_ETAG}" \
+        --distribution-config "file://${CF_TMP}" \
+        --query "Distribution.Status" --output text > /dev/null && \
+        ok "CloudFront origin updated → ${EXPECTED_ORIGIN}" || \
+        warn "CloudFront origin update failed — run manually if needed"
+      rm -f "${CF_TMP}"
+
+      # Apply OAC bucket policy to new bucket
+      aws s3api put-bucket-policy --bucket "${S3_FRONTEND}" \
+        --policy "{
+          \"Version\": \"2012-10-17\",
+          \"Statement\": [{
+            \"Sid\": \"AllowCloudFrontOAC\",
+            \"Effect\": \"Allow\",
+            \"Principal\": {\"Service\": \"cloudfront.amazonaws.com\"},
+            \"Action\": \"s3:GetObject\",
+            \"Resource\": \"arn:aws:s3:::${S3_FRONTEND}/*\",
+            \"Condition\": {
+              \"StringEquals\": {
+                \"AWS:SourceArn\": \"arn:aws:cloudfront::${AWS_ACCOUNT_ID}:distribution/${CF_DIST_ID}\"
+              }
+            }
+          }]
+        }" > /dev/null && ok "S3 bucket policy updated for new origin"
+      aws s3api put-public-access-block --bucket "${S3_FRONTEND}" \
+        --public-access-block-configuration \
+        "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" > /dev/null
+    else
+      skip "CloudFront distribution: ${CF_DIST_ID}"
+    fi
+  fi
+
+  # Fetch the CloudFront domain name for Route 53 (needed whether new or existing)
+  CF_DOMAIN=$(aws cloudfront get-distribution \
+    --id "${CF_DIST_ID}" \
+    --query 'Distribution.DomainName' --output text 2>/dev/null)
+  info "CloudFront domain: ${CF_DOMAIN}"
+
+  # ── STEP 13: Route 53 DNS records ─────────────────────────────────────────
+  echo "▶  13/15  Route 53 DNS records"
+
+  # Z2FDTNDATAQYW2 is the fixed hosted zone ID for ALL CloudFront distributions
+  CF_HOSTED_ZONE="Z2FDTNDATAQYW2"
+
+  HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+    --dns-name "${APP_DOMAIN}" \
+    --query 'HostedZones[0].Id' \
+    --output text 2>/dev/null | sed 's|/hostedzone/||')
+
+  if [ -z "${HOSTED_ZONE_ID}" ] || [ "${HOSTED_ZONE_ID}" = "None" ]; then
+    echo "   ⚠️  No Route 53 hosted zone found for ${APP_DOMAIN} — DNS records skipped."
+    echo "   Complete Phase 1 of the domain/SSL plan (register domain via Route 53) first."
+  else
+    info "Hosted zone: ${HOSTED_ZONE_ID}"
+
+    # Upsert A alias records for apex and www → CloudFront
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id "${HOSTED_ZONE_ID}" \
+      --change-batch "{
+        \"Changes\": [
+          {
+            \"Action\": \"UPSERT\",
+            \"ResourceRecordSet\": {
+              \"Name\": \"${APP_DOMAIN}\",
+              \"Type\": \"A\",
+              \"AliasTarget\": {
+                \"HostedZoneId\": \"${CF_HOSTED_ZONE}\",
+                \"DNSName\": \"${CF_DOMAIN}\",
+                \"EvaluateTargetHealth\": false
+              }
+            }
+          },
+          {
+            \"Action\": \"UPSERT\",
+            \"ResourceRecordSet\": {
+              \"Name\": \"www.${APP_DOMAIN}\",
+              \"Type\": \"A\",
+              \"AliasTarget\": {
+                \"HostedZoneId\": \"${CF_HOSTED_ZONE}\",
+                \"DNSName\": \"${CF_DOMAIN}\",
+                \"EvaluateTargetHealth\": false
+              }
+            }
+          }
+        ]
+      }" > /dev/null
+    ok "Route 53: ${APP_DOMAIN} → ${CF_DOMAIN}"
+    ok "Route 53: www.${APP_DOMAIN} → ${CF_DOMAIN}"
+
+    # ── API CloudFront distribution (api.cartwise.shopping → API Gateway) ─────
+    # Route API traffic through CloudFront so the Lambda receives
+    # CloudFront-Viewer-Country / CloudFront-Viewer-City headers for geo-IP
+    # logging. Also enforces US-only geo restriction on the API.
+    #
+    # Architecture:
+    #   Browser → api.cartwise.shopping (Route 53 alias → CF distribution)
+    #           → API GW execute-api URL (CustomOrigin, HTTPS, AllViewer policy)
+    #           → Lambda
+    #
+    # The API GW custom domain (api.cartwise.shopping → API GW regional) is
+    # kept as the CloudFront origin so the Host header resolves correctly and
+    # the stage mapping is preserved. Route 53 is repointed from the API GW
+    # regional domain to the new CF distribution.
+
+    # ── 13a: API Gateway custom domain (origin for CF, if not already created) ─
+    API_CUSTOM_DOMAIN_EXISTS=$(aws apigatewayv2 get-domain-name \
+      --domain-name "${API_SUBDOMAIN}" \
+      --query 'DomainName' --output text 2>/dev/null)
+
+    if [ -z "${API_CUSTOM_DOMAIN_EXISTS}" ] || [ "${API_CUSTOM_DOMAIN_EXISTS}" = "None" ]; then
+      aws apigatewayv2 create-domain-name \
+        --domain-name "${API_SUBDOMAIN}" \
+        --domain-name-configurations \
+          "CertificateArn=${ACM_CERT_ARN},EndpointType=REGIONAL" > /dev/null
+      ok "API Gateway custom domain: ${API_SUBDOMAIN}"
+    else
+      skip "API Gateway custom domain: ${API_SUBDOMAIN}"
+    fi
+
+    # Map the API Gateway stage to the custom domain (idempotent)
+    aws apigatewayv2 create-api-mapping \
+      --domain-name "${API_SUBDOMAIN}" \
+      --api-id "${API_ID}" \
+      --stage '$default' > /dev/null 2>&1 || true
+
+    # The raw API GW execute-api URL is the CloudFront origin (not the custom domain).
+    # CloudFront connects to it over HTTPS using the Host header for routing.
+    API_GW_ORIGIN="${API_ID}.execute-api.${AWS_REGION}.amazonaws.com"
+
+    # ── 13b-i: Custom origin request policy (AllViewer + CF geo headers) ────
+    # The managed AllViewer policy (b689b0a8) forwards all viewer-sent headers
+    # but NOT CloudFront-injected headers like CloudFront-Viewer-Country/City.
+    # We need a custom policy that adds those two headers so Lambda receives
+    # them and can write geo-IP data to auth logs.
+    GEO_ORP_NAME="${APP_NAME}-allviewer-geo"
+    GEO_ORP_ID=$(aws cloudfront list-origin-request-policies \
+      --type custom \
+      --query "OriginRequestPolicyList.Items[?OriginRequestPolicy.OriginRequestPolicyConfig.Name=='${GEO_ORP_NAME}'].OriginRequestPolicy.Id" \
+      --output text 2>/dev/null)
+
+    if [ -z "${GEO_ORP_ID}" ] || [ "${GEO_ORP_ID}" = "None" ]; then
+      GEO_ORP_ID=$(aws cloudfront create-origin-request-policy \
+        --origin-request-policy-config "{
+          \"Name\": \"${GEO_ORP_NAME}\",
+          \"Comment\": \"AllViewer plus CloudFront geo headers for ${APP_NAME}\",
+          \"HeadersConfig\": {
+            \"HeaderBehavior\": \"allViewerAndWhitelistCloudFront\",
+            \"Headers\": {
+              \"Quantity\": 2,
+              \"Items\": [
+                \"CloudFront-Viewer-Country\",
+                \"CloudFront-Viewer-City\"
+              ]
+            }
+          },
+          \"CookiesConfig\": {\"CookieBehavior\": \"all\"},
+          \"QueryStringsConfig\": {\"QueryStringBehavior\": \"all\"}
+        }" \
+        --query 'OriginRequestPolicy.Id' --output text)
+      ok "Origin request policy (geo headers): ${GEO_ORP_ID}"
+    else
+      skip "Origin request policy (geo headers): ${GEO_ORP_ID}"
+    fi
+
+    # ── 13b: API CloudFront distribution ──────────────────────────────────────
+    API_CF_DIST_ID=$(aws cloudfront list-distributions \
+      --query "DistributionList.Items[?Aliases.Items[?@=='${API_SUBDOMAIN}']].Id" \
+      --output text 2>/dev/null)
+
+    if [ -z "${API_CF_DIST_ID}" ] || [ "${API_CF_DIST_ID}" = "None" ]; then
+      API_CF_DIST_ID=$(aws cloudfront create-distribution \
+        --distribution-config "{
+          \"CallerReference\": \"${APP_NAME}-api-$(date +%s)\",
+          \"Comment\": \"${CF_COMMENT}-api\",
+          \"Enabled\": true,
+          \"HttpVersion\": \"http2and3\",
+          \"IsIPV6Enabled\": true,
+          \"Aliases\": {
+            \"Quantity\": 1,
+            \"Items\": [\"${API_SUBDOMAIN}\"]
+          },
+          \"Origins\": {
+            \"Quantity\": 1,
+            \"Items\": [{
+              \"Id\": \"api-origin\",
+              \"DomainName\": \"${API_GW_ORIGIN}\",
+              \"CustomOriginConfig\": {
+                \"HTTPSPort\": 443,
+                \"HTTPPort\": 80,
+                \"OriginProtocolPolicy\": \"https-only\",
+                \"OriginSSLProtocols\": {
+                  \"Quantity\": 1,
+                  \"Items\": [\"TLSv1.2\"]
+                }
+              }
+            }]
+          },
+          \"DefaultCacheBehavior\": {
+            \"TargetOriginId\": \"api-origin\",
+            \"ViewerProtocolPolicy\": \"https-only\",
+            \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+            \"OriginRequestPolicyId\": \"${GEO_ORP_ID}\",
+            \"ResponseHeadersPolicyId\": \"${HEADERS_POLICY_ID}\",
+            \"Compress\": true,
+            \"AllowedMethods\": {
+              \"Quantity\": 7,
+              \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
+              \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}
+            }
+          },
+          \"ViewerCertificate\": {
+            \"ACMCertificateArn\": \"${ACM_CERT_ARN}\",
+            \"SSLSupportMethod\": \"sni-only\",
+            \"MinimumProtocolVersion\": \"TLSv1.2_2021\"
+          },
+          \"Restrictions\": {
+            \"GeoRestriction\": {
+              \"RestrictionType\": \"whitelist\",
+              \"Quantity\": 1,
+              \"Items\": [\"US\"]
+            }
+          }
+        }" \
+        --query 'Distribution.Id' --output text)
+      ok "API CloudFront distribution created: ${API_CF_DIST_ID}"
+      info "API distribution takes ~15 minutes to deploy globally."
+    else
+      skip "API CloudFront distribution: ${API_CF_DIST_ID}"
+    fi
+
+    # Fetch the CF domain name for Route 53
+    API_CF_DOMAIN=$(aws cloudfront get-distribution \
+      --id "${API_CF_DIST_ID}" \
+      --query 'Distribution.DomainName' --output text 2>/dev/null)
+
+    # ── 13c: Route 53 — point api. alias at CF distribution (not API GW directly) ─
+    if [ -n "${API_CF_DOMAIN}" ] && [ "${API_CF_DOMAIN}" != "None" ]; then
+      aws route53 change-resource-record-sets \
+        --hosted-zone-id "${HOSTED_ZONE_ID}" \
+        --change-batch "{
+          \"Changes\": [{
+            \"Action\": \"UPSERT\",
+            \"ResourceRecordSet\": {
+              \"Name\": \"${API_SUBDOMAIN}\",
+              \"Type\": \"A\",
+              \"AliasTarget\": {
+                \"HostedZoneId\": \"Z2FDTNDATAQYW2\",
+                \"DNSName\": \"${API_CF_DOMAIN}\",
+                \"EvaluateTargetHealth\": false
+              }
+            }
+          }]
+        }" > /dev/null
+      ok "Route 53: ${API_SUBDOMAIN} → ${API_CF_DOMAIN} (via CloudFront)"
+    fi
+
+    # Update FRONTEND_URL and API_URL to use the custom domain
+    FRONTEND_URL="https://${APP_DOMAIN}"
+    API_URL="https://${API_SUBDOMAIN}"
+    info "URLs updated: FRONTEND_URL=${FRONTEND_URL}  API_URL=${API_URL}"
+  fi
+
+  # ── STEP 14: CloudFront cache invalidation ─────────────────────────────────
+  echo "▶  14/15  CloudFront cache invalidation"
+
+  if [ -n "${CF_DIST_ID}" ] && [ "${CF_DIST_ID}" != "None" ]; then
+    INVAL_ID=$(aws cloudfront create-invalidation \
+      --distribution-id "${CF_DIST_ID}" \
+      --paths '/*' \
+      --query 'Invalidation.Id' --output text 2>/dev/null)
+    ok "Frontend cache invalidation queued: ${INVAL_ID}"
+  else
+    skip "Frontend cache invalidation (no distribution ID)"
+  fi
+
+  # Invalidate the API distribution too (picks up any Lambda/config changes)
+  if [ -n "${API_CF_DIST_ID}" ] && [ "${API_CF_DIST_ID}" != "None" ]; then
+    API_INVAL_ID=$(aws cloudfront create-invalidation \
+      --distribution-id "${API_CF_DIST_ID}" \
+      --paths '/*' \
+      --query 'Invalidation.Id' --output text 2>/dev/null)
+    ok "API cache invalidation queued: ${API_INVAL_ID}"
+  fi
+
+  # ── STEP 15: Update S3 website config ─────────────────────────────────────
+  # Once CloudFront is in front, the S3 website endpoint is no longer needed.
+  # Static website hosting can stay enabled (harmless) but direct HTTP access
+  # is blocked by the public access block applied in Step 12.
+  echo "▶  15/15  CloudFront domain active"
+  ok "App served at: https://${APP_DOMAIN}"
+  ok "API served at: https://${API_SUBDOMAIN}"
+
+fi  # end CloudFront block
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════════╗"
-echo "║  ✅  Deployment complete!  (v6)                                   ║"
+echo "║  ✅  Deployment complete!  (v9)                                   ║"
 echo "╠═══════════════════════════════════════════════════════════════════╣"
 echo "║  Frontend:  ${FRONTEND_URL}"
 echo "║  API:       ${API_URL}"
+if [ -n "${CF_DIST_ID}" ] && [ "${CF_DIST_ID}" != "None" ]; then
+echo "║  CF Frontend: ${CF_DIST_ID}"
+fi
+if [ -n "${API_CF_DIST_ID}" ] && [ "${API_CF_DIST_ID}" != "None" ]; then
+echo "║  CF API:      ${API_CF_DIST_ID}"
+fi
 echo "╠═══════════════════════════════════════════════════════════════════╣"
 echo "║  Admin secret (keep this safe!):                                  ║"
-echo "║  ${ADMIN_SECRET}"
+printf '║  %s\n' "${ADMIN_SECRET}"
 echo "╠═══════════════════════════════════════════════════════════════════╣"
 echo "║  Test scraper now:                                                ║"
 echo "║    aws lambda invoke --function-name ${LAMBDA_SCRAPER} \\"

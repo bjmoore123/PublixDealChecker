@@ -230,7 +230,7 @@ def inbound_email_list(event):
     added, skipped_names = 0, []
     for name in parsed_names:
         if name.lower() not in existing:
-            prefs.setdefault("items", []).append({"name": name, "mode": "fuzzy"})
+            prefs.setdefault("items", []).append(name)
             existing.add(name.lower())
             added += 1
         else:

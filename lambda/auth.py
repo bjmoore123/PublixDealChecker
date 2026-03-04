@@ -70,7 +70,7 @@ def login(event, body):
                             "retry_after_seconds": remaining_secs}
                 )
         except Exception as e:
-            print(f"[PDC] lockout parse error: {e}")
+            print(f"[CW] lockout parse error: {e}")
 
     # ── Verify PIN ─────────────────────────────────────────────────
     pin_ok = verify_pin(pin, user.get("pin_hash", ""))
@@ -125,7 +125,17 @@ def login(event, body):
     prefs = _to_py(user.get("prefs", DEFAULT_PREFS))
     if not prefs.get("notify_email"):
         prefs["notify_email"] = email
-    return ok({"token": token, "email": email, "prefs": prefs})
+    # PDC-05: set HttpOnly cookie alongside the JSON token.
+    # SameSite=None required because frontend (cartwise.shopping) and API
+    # (api.cartwise.shopping) are different subdomains — cross-site context.
+    # SameSite=None mandates Secure=true, which we have (HTTPS only).
+    cookie = (
+        f"session={token}; HttpOnly; Secure; SameSite=None; "
+        f"Path=/; Max-Age={SESSION_TTL_HOURS * 3600}"
+    )
+    response = ok({"token": token, "email": email, "prefs": prefs}, _event=event)
+    response["headers"] = {**response["headers"], "Set-Cookie": cookie}
+    return response
 
 
 def logout(event):
@@ -140,8 +150,13 @@ def logout(event):
                 ExpressionAttributeValues={":t": int(datetime.now(timezone.utc).timestamp())},
             )
         except Exception as e:
-            print(f"[PDC] logout valid_after update failed: {e}")
-    return ok({"message": "Logged out."})
+            print(f"[CW] logout valid_after update failed: {e}")
+    response = ok({"message": "Logged out."}, _event=event)  # PDC-05: clear cookie
+    response["headers"] = {
+        **response["headers"],
+        "Set-Cookie": "session=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0",
+    }
+    return response
 
 
 def change_pin(event, body):

@@ -81,25 +81,36 @@ def parse_deal(d: dict) -> dict:
     # frontend sort doesn't need to parse save_line text at runtime.
     savings_per_item = parse_per_item_savings(save_line)
 
+    # final_price: numeric sale price from the API (0 = no individual price, e.g. BOGO)
+    try:
+        final_price = float(d.get("final_price") or d.get("finalPrice") or 0)
+    except (TypeError, ValueError):
+        final_price = 0.0
+
+    # wa_promotion_type_id: 1=Weekly Ad, 4=Extra Savings
+    wa_promo_id = d.get("wa_promotion_type_id") or d.get("wa_promotionTypeId") or 1
+
     return {
-        "id":               str(d.get("id", "")),
-        "title":            title,
-        "description":      description,
-        "savings":          savings,
-        "save_line":        save_line,
-        "fine_print":       fine_print,
-        "brand":            brand,
-        "department":       department,
-        "valid_from":       d.get("valid_from") or d.get("wa_startDateFormatted", ""),
-        "valid_thru":       d.get("valid_thru") or d.get("wa_endDateFormatted", ""),
-        "image_url":        d.get("image_url") or d.get("enhancedImageUrl") or d.get("imageUrl", ""),
-        "saving_type":      saving_type,
-        "coupon_id":        coupon_id,
-        "categories":       categories,
-        "savings_per_item": savings_per_item,   # float or None; used by frontend sort
-        "is_bogo":          is_bogo,
-        "is_publix_brand":  brand_lower == "publix" or title_lower.startswith("publix "),
-        "has_coupon":       bool(d.get("has_coupon") or d.get("hasCoupon")) or saving_type in ("PrintableCoupon", "DigitalCoupon"),
-        "is_stacked":       saving_type == "StackedDeals",
-        "is_extra":         saving_type == "ExtraSavings",
+        "id":                   str(d.get("id", "")),
+        "title":                title,
+        "description":          description,
+        "savings":              savings,
+        "save_line":            save_line,
+        "fine_print":           fine_print,
+        "brand":                brand,
+        "department":           department,
+        "valid_from":           d.get("valid_from") or d.get("wa_startDateFormatted", ""),
+        "valid_thru":           d.get("valid_thru") or d.get("wa_endDateFormatted", ""),
+        "image_url":            d.get("image_url") or d.get("enhancedImageUrl") or d.get("imageUrl", ""),
+        "saving_type":          saving_type,
+        "coupon_id":            coupon_id,
+        "categories":           categories,
+        "savings_per_item":     savings_per_item,     # float or None; used by frontend sort
+        "final_price":          final_price,           # numeric sale price; 0 if not applicable
+        "wa_promotion_type_id": wa_promo_id,           # 1=WeeklyAd, 4=ExtraSavings
+        "is_bogo":              is_bogo,
+        "is_publix_brand":      brand_lower == "publix" or title_lower.startswith("publix "),
+        "has_coupon":           bool(d.get("has_coupon") or d.get("hasCoupon")) or saving_type in ("PrintableCoupon", "DigitalCoupon"),
+        "is_stacked":           saving_type == "StackedDeals",
+        "is_extra":             saving_type == "ExtraSavings",
     }

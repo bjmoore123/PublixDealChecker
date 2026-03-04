@@ -40,20 +40,20 @@ def save_prefs(event, body):
     if ne and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', ne):
         return err("Invalid notification email address.")
     if not ne: prefs["notify_email"] = sess["email"]
-    # PDC-09: validate matching threshold is int in [0, 100]
+    # PDC-09: validate matching sensitivity is a known value
     matching = prefs.get("matching") or {}
-    if "threshold" in matching:
-        try:
-            t = int(matching["threshold"])
-            matching["threshold"] = max(0, min(100, t))
-        except (ValueError, TypeError):
-            matching["threshold"] = 75
-        prefs["matching"] = matching
+    sens = matching.get("sensitivity", "normal")
+    if sens not in ("strict", "normal", "loose"):
+        matching["sensitivity"] = "normal"
+    else:
+        matching["sensitivity"] = sens
+    prefs["matching"] = matching
     # PDC-09: cap item strings at 200 chars each, cap list at 200 items
     if isinstance(prefs.get("items"), list):
         prefs["items"] = [
-            ({**i, "name": str(i.get("name", ""))[:200]} if isinstance(i, dict) else i)
+            (str(i.get("name", ""))[:200] if isinstance(i, dict) else str(i)[:200])
             for i in prefs["items"][:200]
+            if (i.get("name") if isinstance(i, dict) else i)
         ]
     users_table.update_item(
         Key={"email": sess["email"]},
@@ -113,7 +113,7 @@ def unsubscribe(event):
         _log_app_event("api", "info", action="unsubscribe", email=email)
         return _unsub_html("Unsubscribed",
             f"Email alerts have been turned off for <strong>{email}</strong>. "
-            f"You can re-enable them at any time by signing in to Publix Deal Checker.")
+            f"You can re-enable them at any time by signing in to Cartwise.")
 
     return _unsub_html("Method Not Allowed", "Unexpected request method.", success=False)
 
@@ -125,7 +125,7 @@ def _unsub_html(title: str, body_html: str, success: bool = True) -> dict:
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — Publix Deal Checker</title>
+<title>{title} — Cartwise</title>
 <style>
   body{{font-family:Arial,sans-serif;background:#f5f5f5;display:flex;align-items:center;
         justify-content:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}}
@@ -141,7 +141,7 @@ def _unsub_html(title: str, body_html: str, success: bool = True) -> dict:
   <div class="icon">{icon}</div>
   <h1>{title}</h1>
   <p>{body_html}</p>
-  <a href="{app_url}">← Back to Publix Deal Checker</a>
+  <a href="{app_url}">← Back to Cartwise</a>
 </div></body></html>"""
     return {
         "statusCode": 200,
@@ -157,7 +157,7 @@ def _unsub_confirm_page(email: str, token: str) -> dict:
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribe — Publix Deal Checker</title>
+<title>Unsubscribe — Cartwise</title>
 <style>
   body{{font-family:Arial,sans-serif;background:#f5f5f5;display:flex;align-items:center;
         justify-content:center;min-height:100vh;margin:0;padding:24px;box-sizing:border-box}}
@@ -203,7 +203,7 @@ def send_test_email(event):
     notify_email = (prefs.get("notify_email") or sess["email"]).strip()
 
     resend_key  = os.environ.get("RESEND_API_KEY", "")
-    resend_from = (f"{os.environ.get('RESEND_FROM_NAME','Publix Alerts')} "
+    resend_from = (f"{os.environ.get('RESEND_FROM_NAME','Cartwise Alerts')} "
                    f"<{os.environ.get('RESEND_FROM_ADDR','onboarding@resend.dev')}>")
     if not resend_key:
         return err("Resend API key not configured.", 500)
@@ -214,15 +214,15 @@ def send_test_email(event):
         _resend.Emails.send({
             "from":    resend_from,
             "to":      [notify_email],
-            "subject": "✅ Publix Deal Checker — test email",
+            "subject": "✅ Cartwise — test email",
             "html":    f"""<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:40px auto;color:#333;">
   <div style="background:#1a6b3c;color:white;padding:24px;border-radius:8px 8px 0 0;">
     <h2 style="margin:0;">✅ Test Email</h2>
-    <p style="margin:4px 0 0;opacity:.8;">Publix Deal Checker notifications are working.</p>
+    <p style="margin:4px 0 0;opacity:.8;">Cartwise notifications are working.</p>
   </div>
   <div style="background:white;border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
     <p>This is a test message sent to <strong>{notify_email}</strong>.</p>
-    <p style="color:#888;font-size:13px;margin-top:16px;">Sent from your Publix Deal Checker account: {sess["email"]}</p>
+    <p style="color:#888;font-size:13px;margin-top:16px;">Sent from your Cartwise account: {sess["email"]}</p>
   </div>
 </body></html>""",
         })
@@ -234,7 +234,7 @@ def send_test_email(event):
         _log_app_event("email", "error", ok=False,
                        to=notify_email, subject="test-email",
                        trigger="manual", user=sess["email"], message=str(e)[:200])
-        print(f"[PDC] send_test_email: {e}")
+        print(f"[CW] send_test_email: {e}")
         return err("Failed to send email.", 500)
 
 
@@ -274,5 +274,5 @@ def resend_weekly_email(event):
                        user=sess["email"], notify_email=notify_email, store_id=store_id)
         return ok({"message": f"Weekly deals email queued for {notify_email}. It will arrive within a few minutes."})
     except Exception as e:
-        print(f"[PDC] resend_weekly_email invoke: {e}")
+        print(f"[CW] resend_weekly_email invoke: {e}")
         return err("Failed to trigger email.", 500)

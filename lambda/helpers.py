@@ -20,35 +20,91 @@ dynamodb      = boto3.resource("dynamodb")
 lambda_client = boto3.client("lambda", region_name=_region)
 logs_client   = boto3.client("logs",   region_name=_region)
 
-users_table     = dynamodb.Table(os.environ["USERS_TABLE"])
-sessions_table  = dynamodb.Table(os.environ["SESSIONS_TABLE"])
-scrape_logs_tbl = dynamodb.Table(os.environ["SCRAPE_LOGS_TABLE"])
-auth_logs_tbl   = dynamodb.Table(os.environ["AUTH_LOGS_TABLE"])
-app_logs_tbl    = dynamodb.Table(os.environ["APP_LOGS_TABLE"])
-history_tbl     = dynamodb.Table(os.environ.get("HISTORY_TABLE",  "publix-deal-checker-deal-history"))
-corpus_tbl      = dynamodb.Table(os.environ.get("CORPUS_TABLE",   "publix-deal-checker-deal-corpus"))
+users_table         = dynamodb.Table(os.environ["USERS_TABLE"])
+sessions_table      = dynamodb.Table(os.environ["SESSIONS_TABLE"])
+admin_sessions_tbl  = dynamodb.Table(os.environ.get("ADMIN_SESSIONS_TABLE", "cartwise-admin-sessions"))
+scrape_logs_tbl     = dynamodb.Table(os.environ["SCRAPE_LOGS_TABLE"])
+auth_logs_tbl       = dynamodb.Table(os.environ["AUTH_LOGS_TABLE"])
+app_logs_tbl        = dynamodb.Table(os.environ["APP_LOGS_TABLE"])
+history_tbl         = dynamodb.Table(os.environ.get("HISTORY_TABLE",  "cartwise-deal-history"))
+corpus_tbl          = dynamodb.Table(os.environ.get("CORPUS_TABLE",   "cartwise-deal-corpus"))
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 ADMIN_SECRET     = (os.environ.get("ADMIN_SECRET", "") or "").strip()
-SCRAPER_FUNCTION = os.environ.get("SCRAPER_FUNCTION", "publix-deal-checker-scraper")
+SCRAPER_FUNCTION = os.environ.get("SCRAPER_FUNCTION", "cartwise-scraper")
 LOG_GROUP        = f"/aws/lambda/{SCRAPER_FUNCTION}"
 UNSUB_SECRET     = (os.environ.get("UNSUB_SECRET", "changeme-set-in-deploy") or "").strip()
 FRONTEND_URL     = (os.environ.get("FRONTEND_URL", "") or "").strip()
+
+# Build the set of allowed origins from FRONTEND_URL.
+# Accepts both apex (cartwise.shopping) and www subdomain automatically.
+def _allowed_origins(base_url: str) -> set:
+    if not base_url:
+        return set()
+    origins = {base_url.rstrip("/")}
+    # If apex, also allow www. and vice versa
+    if base_url.startswith("https://www."):
+        origins.add("https://" + base_url[len("https://www."):].rstrip("/"))
+    elif base_url.startswith("https://") and "//" not in base_url[8:]:
+        origins.add("https://www." + base_url[len("https://"):].rstrip("/"))
+    return origins
+
+_ALLOWED_ORIGINS = _allowed_origins(FRONTEND_URL)
+
+
+def cors_headers(event=None) -> dict:
+    """Return CORS headers with the correct Allow-Origin for the request origin."""
+    origin = ""
+    if event:
+        hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+        origin = hdrs.get("origin", "")
+    if origin and origin in _ALLOWED_ORIGINS:
+        allow_origin = origin
+    elif _ALLOWED_ORIGINS:
+        allow_origin = FRONTEND_URL  # default to primary
+    else:
+        allow_origin = "*"
+    return {
+        "Access-Control-Allow-Origin":      allow_origin,
+        "Access-Control-Allow-Headers":     "Content-Type,Authorization,Cookie",
+        "Access-Control-Allow-Methods":     "GET,POST,PUT,DELETE,OPTIONS",
+        "Access-Control-Allow-Credentials": "true" if allow_origin != "*" else "false",
+        "Vary":                             "Origin",
+        "Content-Type": "application/json",
+    }
 API_URL          = (os.environ.get("API_URL", "") or "").strip()
 INBOUND_EMAIL_ADDR    = (os.environ.get("INBOUND_EMAIL_ADDR", "") or "").strip()
 RESEND_WEBHOOK_SECRET = (os.environ.get("RESEND_WEBHOOK_SECRET", "") or "").strip()
 
-SESSION_TTL_HOURS     = 72
-LOGIN_MAX_ATTEMPTS    = 5
-LOGIN_LOCKOUT_MINUTES = 60
+SESSION_TTL_HOURS       = 72
+ADMIN_SESSION_TTL_HOURS = 12   # PDC-04: admin sessions expire after 12 hours
+LOGIN_MAX_ATTEMPTS      = 5
+LOGIN_LOCKOUT_MINUTES   = 60
 
-CORS = {
-    "Access-Control-Allow-Origin":  FRONTEND_URL if FRONTEND_URL else "*",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-    "Content-Type": "application/json",
-}
+
+# Static fallback used by ok()/err() when no event is available
+CORS = cors_headers(None)
+
+
+def ok(body, status=200, _event=None):
+    hdrs = cors_headers(_event) if _event else CORS
+    return {"statusCode": status, "headers": hdrs, "body": json.dumps(body, cls=_Enc)}
+
+def err(msg, status=400, _extra=None, _event=None):
+    if status >= 400 and status not in (401, 404, 429):
+        try:
+            from logging_utils import _log_app_event
+            _log_app_event("api", "error" if status >= 500 else "warn",
+                           status=status, message=str(msg)[:300])
+        except Exception as e:
+            print(f"[CW] err logging failed: {e}")
+    body = {"error": msg}
+    if _extra:
+        body.update(_extra)
+    hdrs = cors_headers(_event) if _event else CORS
+    return {"statusCode": status, "headers": hdrs, "body": json.dumps(body)}
+
 
 DEFAULT_PREFS = {
     "store_id":      "",
@@ -57,7 +113,7 @@ DEFAULT_PREFS = {
     "notify_email":  "",
     "email_enabled": True,
     "items":         [],
-    "matching":      {"threshold": 75},
+    "matching":      {"sensitivity": "normal"},
     "notifications": {"only_matches": True},
 }
 
@@ -73,24 +129,6 @@ class _Enc(json.JSONEncoder):
         if isinstance(o, Decimal):
             return int(o) if o == int(o) else float(o)
         return super().default(o)
-
-# ── Response helpers ──────────────────────────────────────────────────────────
-
-def ok(body, status=200):
-    return {"statusCode": status, "headers": CORS, "body": json.dumps(body, cls=_Enc)}
-
-def err(msg, status=400, _extra=None):
-    if status >= 400 and status not in (401, 404, 429):
-        try:
-            from logging_utils import _log_app_event
-            _log_app_event("api", "error" if status >= 500 else "warn",
-                           status=status, message=str(msg)[:300])
-        except Exception as e:
-            print(f"[PDC] err logging failed: {e}")
-    body = {"error": msg}
-    if _extra:
-        body.update(_extra)
-    return {"statusCode": status, "headers": CORS, "body": json.dumps(body)}
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
@@ -161,9 +199,36 @@ def _verify_unsub_token(email: str, token: str) -> bool:
 # ── Session & admin auth ──────────────────────────────────────────────────────
 
 def get_session(event):
-    """Validate Bearer token, return session item or None."""
+    """Validate session token; reads HttpOnly cookie first, Bearer header as fallback.
+    PDC-05: HttpOnly cookie is the primary transport for session tokens.
+    HTTP API payload format 2.0 puts cookies in event['cookies'] list, not headers.
+    """
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
-    token   = headers.get("authorization", "").replace("Bearer ", "").replace("bearer ", "").strip()
+
+    # PDC-05: prefer cookie over Authorization header.
+    # Payload format 2.0: cookies are in event["cookies"] = ["name=value", ...]
+    # Payload format 1.0 fallback: cookies are in the Cookie header.
+    token = ""
+    cookies = event.get("cookies") or []
+    if cookies:
+        for part in cookies:
+            part = part.strip()
+            if part.startswith("session="):
+                token = part[len("session="):].strip()
+                break
+    if not token:
+        cookie_header = headers.get("cookie", "")
+        if cookie_header:
+            for part in cookie_header.split(";"):
+                part = part.strip()
+                if part.startswith("session="):
+                    token = part[len("session="):].strip()
+                    break
+
+    # Fallback: Bearer token in Authorization header
+    if not token:
+        token = headers.get("authorization", "").replace("Bearer ", "").replace("bearer ", "").strip()
+
     if not token: return None
     item = sessions_table.get_item(Key={"token": token}).get("Item")
     if not item: return None
@@ -183,15 +248,34 @@ def get_session(event):
             pass  # never let this check break auth
     return item
 
+
 def get_admin_auth(event) -> bool:
-    """Return True if the request carries a valid admin secret.
-    Requires 'AdminSecret <secret>' header prefix (PDC-10).
-    Uses hmac.compare_digest to prevent timing attacks (PDC-15)."""
+    """Return True if the request carries a valid admin session token (PDC-04).
+    Accepts: 'AdminToken <token>' header — issued by POST /admin/login.
+    Falls back to raw secret check for deploy.sh bootstrap / CLI use.
+    Uses hmac.compare_digest to prevent timing attacks (PDC-15).
+    """
     if not ADMIN_SECRET: return False
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     auth    = headers.get("authorization", "").strip()
+
+    # PDC-04: validate short-lived admin session token
+    if auth.lower().startswith("admintoken "):
+        candidate_token = auth[len("admintoken "):].strip()
+        try:
+            item = admin_sessions_tbl.get_item(Key={"token": candidate_token}).get("Item")
+            if not item: return False
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            return item.get("expires_at", 0) >= now_ts
+        except Exception as e:
+            print(f"[CW] get_admin_auth token lookup failed: {e}")
+            return False
+
+    # Legacy/bootstrap: raw secret in Authorization header (still accepted)
     for prefix in ("AdminSecret ", "adminsecret "):
         if auth.lower().startswith(prefix.lower()):
             candidate = auth[len(prefix):].strip()
             return hmac.compare_digest(candidate, ADMIN_SECRET)
+
     return False
+
